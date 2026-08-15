@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>H3 Character Manager</title>
+    <title>H3 Reference Manager</title>
     <link rel="stylesheet" href="character-manager/assets/character-manager.css" />
   </head>
   <body>
@@ -11,97 +11,85 @@
       <header class="topbar">
         <div>
           <span class="eyebrow">H3 Character Ref Builder</span>
-          <h1>Character Manager</h1>
+          <h1>H3 Reference Manager</h1>
         </div>
-        <button id="new-character" class="button primary" type="button">+ New Character</button>
+        <button id="new-item" class="button primary" type="button">+ New Character</button>
       </header>
+
+      <nav class="tabs" aria-label="Reference libraries">
+        <button id="characters-tab" class="tab active" type="button" aria-selected="true">Characters</button>
+        <button id="scenes-tab" class="tab" type="button" aria-selected="false">Scene Presets</button>
+      </nav>
 
       <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
       <main class="workspace">
-        <aside class="sidebar" aria-label="Characters">
+        <aside class="sidebar" aria-label="Saved items">
           <div class="sidebar-heading">
-            <h2>Characters</h2>
-            <span id="character-count" class="count">0</span>
+            <h2 id="sidebar-title">Characters</h2>
+            <span id="item-count" class="count">0</span>
           </div>
-          <div id="character-list" class="character-list"></div>
-          <div id="empty-list" class="empty-list" hidden>
-            No characters yet. Create one to get started.
-          </div>
+          <div id="item-list" class="character-list"></div>
+          <div id="empty-list" class="empty-list" hidden></div>
         </aside>
 
-        <section class="editor" aria-label="Character editor">
+        <section class="editor" aria-label="Reference editor">
           <div id="editor-empty" class="editor-empty">
             <div class="empty-glyph">H3</div>
-            <h2>Select a character</h2>
-            <p>Choose a profile from the list or create a new one.</p>
+            <h2 id="empty-title">Select a character</h2>
+            <p id="empty-message">Choose a profile from the list or create a new one.</p>
           </div>
 
-          <form id="editor-form" hidden>
+          <form id="character-form" hidden>
             <div class="editor-title-row">
-              <div>
-                <span class="eyebrow">Character Editor</span>
-                <h2 id="editor-title">New Character</h2>
-              </div>
+              <div><span class="eyebrow">Character Editor</span><h2 id="character-title">New Character</h2></div>
               <span id="character-id" class="character-id"></span>
             </div>
-
-            <div id="readiness" class="readiness incomplete" role="status">
-              Save this character, then add and select two images and one audio reference.
-            </div>
-
+            <div id="readiness" class="readiness incomplete" role="status"></div>
             <label class="field">
               <span>Name <strong aria-hidden="true">*</strong></span>
-              <input id="name" name="name" maxlength="200" autocomplete="off" required />
+              <input id="character-name" maxlength="200" autocomplete="off" required />
             </label>
-
             <label class="field">
-              <span>Character Description <small>optional, reserved for future use</small></span>
-              <textarea id="description" name="description" maxlength="20000" rows="5"></textarea>
+              <span>Character Identity Details <small>optional stable details for &lt;Subject 1&gt;</small></span>
+              <textarea id="character-description" maxlength="20000" rows="6"></textarea>
             </label>
-
             <section class="library-section" aria-labelledby="images-heading">
-              <div class="library-heading">
-                <div>
-                  <h3 id="images-heading">Images</h3>
-                  <span id="image-count" class="library-count">0 / 9 references</span>
-                </div>
-                <button id="add-image" class="button secondary" type="button">+ Add Image</button>
-              </div>
-              <p id="image-limit-note" class="limit-note" hidden>
-                The 9-image limit has been reached.
-              </p>
+              <div class="library-heading"><div><h3 id="images-heading">Images</h3><span id="image-count" class="library-count"></span></div><button id="add-image" class="button secondary" type="button">+ Add Image</button></div>
+              <p id="image-limit-note" class="limit-note" hidden>The 9-image limit has been reached.</p>
               <div id="image-library" class="image-library"></div>
-              <p id="images-empty" class="library-empty">
-                No image references yet. Add up to nine reusable images.
-              </p>
+              <p id="images-empty" class="library-empty">No image references yet. Add up to nine reusable images.</p>
             </section>
-
             <section class="library-section" aria-labelledby="audio-heading">
-              <div class="library-heading">
-                <div>
-                  <h3 id="audio-heading">Audio</h3>
-                  <span id="audio-count" class="library-count">0 / 3 references</span>
-                </div>
-                <button id="add-audio" class="button secondary" type="button">+ Add Audio</button>
-              </div>
-              <p id="audio-limit-note" class="limit-note" hidden>
-                The 3-audio limit has been reached.
-              </p>
+              <div class="library-heading"><div><h3 id="audio-heading">Audio</h3><span id="audio-count" class="library-count"></span></div><button id="add-audio" class="button secondary" type="button">+ Add Audio</button></div>
+              <p id="audio-limit-note" class="limit-note" hidden>The 3-audio limit has been reached.</p>
               <div id="audio-library" class="audio-library"></div>
-              <p id="audio-empty" class="library-empty">
-                No audio references yet. Add up to three reusable voice clips.
-              </p>
+              <p id="audio-empty" class="library-empty">No audio references yet. Add up to three reusable voice clips.</p>
             </section>
-
             <input id="media-file" type="file" hidden />
-
             <div class="editor-actions">
               <button id="delete-character" class="button danger" type="button">Delete Character</button>
-              <div class="right-actions">
-                <span id="dirty-note" class="dirty-note" hidden>Unsaved changes</span>
-                <button id="save-character" class="button primary" type="submit">Save Character</button>
-              </div>
+              <div class="right-actions"><span id="character-dirty" class="dirty-note" hidden>Unsaved changes</span><button class="button primary" type="submit">Save Character</button></div>
+            </div>
+          </form>
+
+          <form id="scene-form" hidden>
+            <div class="editor-title-row">
+              <div><span class="eyebrow">Scene Editor</span><h2 id="scene-title">New Scene Preset</h2></div>
+              <span id="scene-id" class="character-id"></span>
+            </div>
+            <label class="field">
+              <span>Name <strong aria-hidden="true">*</strong></span>
+              <input id="scene-name" maxlength="200" autocomplete="off" required />
+            </label>
+            <label class="field scene-definition-field">
+              <span>Scene Definition <small>body text used verbatim for &lt;Subject 2&gt;</small></span>
+              <textarea id="scene-definition" maxlength="50000" rows="16" placeholder="a quiet tropical beach in warm late-afternoon sunlight..."></textarea>
+            </label>
+            <p class="field-help">Store only the environment definition. A pasted “&lt;Subject 2&gt; is” prefix is removed on save.</p>
+            <div class="editor-actions">
+              <button id="delete-scene" class="button danger" type="button">Delete Scene</button>
+              <div class="right-actions"><span id="scene-dirty" class="dirty-note" hidden>Unsaved changes</span><button class="button primary" type="submit">Save Scene</button></div>
             </div>
           </form>
         </section>
@@ -110,15 +98,10 @@
 
     <dialog id="confirm-dialog">
       <form method="dialog" class="dialog-card">
-        <h2 id="confirm-title">Confirm</h2>
-        <p id="confirm-message"></p>
-        <div class="dialog-actions">
-          <button value="cancel" class="button secondary">Cancel</button>
-          <button value="confirm" class="button danger">Confirm</button>
-        </div>
+        <h2 id="confirm-title">Confirm</h2><p id="confirm-message"></p>
+        <div class="dialog-actions"><button value="cancel" class="button secondary">Cancel</button><button value="confirm" class="button danger">Confirm</button></div>
       </form>
     </dialog>
-
     <script type="module" src="character-manager/assets/character-manager.js"></script>
   </body>
 </html>

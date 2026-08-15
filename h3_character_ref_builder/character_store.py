@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -20,13 +21,16 @@ from .media import (
     extension_for_upload,
     validate_media_file,
 )
+from .roles import DEFAULT_MEDIA_ROLES, validate_role
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+V2_SCHEMA_VERSION = 2
 LEGACY_SCHEMA_VERSION = 1
 DATA_DIRECTORY = "h3-character-ref-builder"
 MEDIA_LIMITS = {"image": 9, "audio": 3}
 MEDIA_COLLECTIONS = {"image": "images", "audio": "audio"}
 DEFAULT_SLOTS = ("image_1", "image_2", "audio")
+_SUBJECT_1_PREFIX = re.compile(r"^\s*<Subject\s+1>\s+is\s*", re.IGNORECASE)
 _UNSET = object()
 
 
@@ -92,6 +96,17 @@ def validate_media_id(media_id: str) -> str:
     return _validate_uuid(media_id, "Media UUID", InvalidMediaId)
 
 
+def normalize_identity_description(description: Any) -> str:
+    if not isinstance(description, str):
+        raise InvalidProfile("Character identity details must be a string.")
+    body = _SUBJECT_1_PREFIX.sub("", description, count=1).strip()
+    if len(body) > 20_000:
+        raise InvalidProfile(
+            "Character identity details must be 20,000 characters or fewer."
+        )
+    return body
+
+
 class CharacterStore:
     """Manage versioned profiles and UUID-addressed media beneath one trusted root."""
 
@@ -122,13 +137,7 @@ class CharacterStore:
             raise InvalidProfile("Character name is required.")
         if len(clean_name) > 200:
             raise InvalidProfile("Character name must be 200 characters or fewer.")
-        if not isinstance(description, str):
-            raise InvalidProfile("Character description must be a string.")
-        if len(description) > 20_000:
-            raise InvalidProfile(
-                "Character description must be 20,000 characters or fewer."
-            )
-        return clean_name, description
+        return clean_name, normalize_identity_description(description)
 
     @staticmethod
     def _validate_label(label: Any) -> str:
@@ -146,16 +155,29 @@ class CharacterStore:
         return media_type
 
     @staticmethod
+    def _validate_media_role(media_type: str, role: Any) -> str:
+        try:
+            return validate_role(media_type, role)
+        except ValueError as exc:
+            raise InvalidProfile(str(exc)) from exc
+
+    @staticmethod
     def _validate_record(
         record: Any, media_type: str, expected_id: str
     ) -> dict[str, str]:
-        if not isinstance(record, dict) or set(record) != {"id", "file", "label"}:
+        if not isinstance(record, dict) or set(record) != {
+            "id",
+            "file",
+            "label",
+            "role",
+        }:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} contains an invalid {media_type} record."
             )
         try:
             media_id = validate_media_id(record["id"])
             label = CharacterStore._validate_label(record["label"])
+            role = CharacterStore._validate_media_role(media_type, record["role"])
         except CharacterStoreError as exc:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} is invalid: {exc}"
@@ -180,7 +202,12 @@ class CharacterStore:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} contains an unsafe {media_type} filename."
             )
-        return {"id": media_id, "file": path.as_posix(), "label": label}
+        return {
+            "id": media_id,
+            "file": path.as_posix(),
+            "label": label,
+            "role": role,
+        }
 
     @staticmethod
     def _validate_profile_data(data: Any, expected_id: str) -> dict[str, Any]:
@@ -218,7 +245,6 @@ class CharacterStore:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} is invalid: {exc}"
             ) from exc
-
         if not isinstance(data["images"], list) or not isinstance(data["audio"], list):
             raise ProfileCorrupt(
                 f"Character profile {expected_id} media collections must be arrays."
@@ -231,7 +257,6 @@ class CharacterStore:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} has too many audio references."
             )
-
         images = [
             CharacterStore._validate_record(record, "image", expected_id)
             for record in data["images"]
@@ -245,7 +270,6 @@ class CharacterStore:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} contains duplicate media IDs."
             )
-
         defaults = data["defaults"]
         if not isinstance(defaults, dict) or set(defaults) != set(DEFAULT_SLOTS):
             raise ProfileCorrupt(
@@ -277,7 +301,6 @@ class CharacterStore:
             raise ProfileCorrupt(
                 f"Character profile {expected_id} selects the same image twice."
             )
-
         return {
             "schema_version": SCHEMA_VERSION,
             "id": expected_id,
@@ -352,7 +375,6 @@ class CharacterStore:
             raise ProfileCorrupt(
                 f"Character profile {character_id} is invalid: {exc}"
             ) from exc
-
         directory = self._character_dir(character_id)
         profile = {
             "schema_version": SCHEMA_VERSION,
@@ -364,9 +386,24 @@ class CharacterStore:
             "defaults": {"image_1": None, "image_2": None, "audio": None},
         }
         slot_config = {
-            "reference_image_1": ("image", "image_1", "Reference Image 1"),
-            "reference_image_2": ("image", "image_2", "Reference Image 2"),
-            "reference_audio": ("audio", "audio", "Reference Audio"),
+            "reference_image_1": (
+                "image",
+                "image_1",
+                "Reference Image 1",
+                "face_identity",
+            ),
+            "reference_image_2": (
+                "image",
+                "image_2",
+                "Reference Image 2",
+                "full_body_identity",
+            ),
+            "reference_audio": (
+                "audio",
+                "audio",
+                "Reference Audio",
+                "voice_identity",
+            ),
         }
         copied: list[Path] = []
         legacy_sources: list[Path] = []
@@ -392,7 +429,7 @@ class CharacterStore:
                     raise MissingMedia(
                         f'Character "{name}" is missing required legacy media slot {slot}.'
                     )
-                media_type, default_slot, label = slot_config[slot]
+                media_type, default_slot, label, role = slot_config[slot]
                 extension = extension_for_upload(media_type, filename)
                 media_id = str(uuid.uuid5(uuid.UUID(character_id), f"h3-v1:{slot}"))
                 relative = (
@@ -404,10 +441,14 @@ class CharacterStore:
                 copied.append(destination)
                 legacy_sources.append(source)
                 profile[MEDIA_COLLECTIONS[media_type]].append(
-                    {"id": media_id, "file": relative.as_posix(), "label": label}
+                    {
+                        "id": media_id,
+                        "file": relative.as_posix(),
+                        "label": label,
+                        "role": role,
+                    }
                 )
                 profile["defaults"][default_slot] = media_id
-
             profile = self._validate_profile_data(profile, character_id)
             self._atomic_write_json(directory / "profile.json", profile)
         except Exception:
@@ -417,13 +458,58 @@ class CharacterStore:
                 except FileNotFoundError:
                     pass
             raise
-
         for source in legacy_sources:
             try:
                 source.unlink()
             except FileNotFoundError:
                 pass
         return profile
+
+    def _migrate_v2(self, character_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        required = {
+            "schema_version",
+            "id",
+            "name",
+            "description",
+            "images",
+            "audio",
+            "defaults",
+        }
+        if set(data) != required or data.get("schema_version") != V2_SCHEMA_VERSION:
+            raise ProfileCorrupt(
+                f"Character profile {character_id} has invalid V2 data."
+            )
+        if data.get("id") != character_id:
+            raise ProfileCorrupt(
+                f"Character profile {character_id} contains a mismatched id."
+            )
+        migrated = copy.deepcopy(data)
+        migrated["schema_version"] = SCHEMA_VERSION
+        defaults = migrated.get("defaults")
+        if not isinstance(defaults, dict):
+            raise ProfileCorrupt(
+                f"Character profile {character_id} has invalid V2 defaults."
+            )
+        selected_roles = {
+            defaults.get("image_1"): "face_identity",
+            defaults.get("image_2"): "full_body_identity",
+            defaults.get("audio"): "voice_identity",
+        }
+        for record in migrated.get("images", []):
+            if not isinstance(record, dict):
+                raise ProfileCorrupt(
+                    f"Character profile {character_id} has invalid V2 image data."
+                )
+            record.setdefault("role", selected_roles.get(record.get("id"), "general"))
+        for record in migrated.get("audio", []):
+            if not isinstance(record, dict):
+                raise ProfileCorrupt(
+                    f"Character profile {character_id} has invalid V2 audio data."
+                )
+            record.setdefault("role", selected_roles.get(record.get("id"), "general"))
+        migrated = self._validate_profile_data(migrated, character_id)
+        self._atomic_write_json(self._profile_path(character_id), migrated)
+        return migrated
 
     def _read_profile_unlocked(self, character_id: str) -> dict[str, Any]:
         canonical = validate_character_id(character_id)
@@ -442,6 +528,8 @@ class CharacterStore:
             and data.get("schema_version") == LEGACY_SCHEMA_VERSION
         ):
             data = self._migrate_v1(canonical, data)
+        elif isinstance(data, dict) and data.get("schema_version") == V2_SCHEMA_VERSION:
+            data = self._migrate_v2(canonical, data)
         return self._validate_profile_data(data, canonical)
 
     def _read_profile(self, character_id: str) -> dict[str, Any]:
@@ -509,12 +597,9 @@ class CharacterStore:
         canonical = validate_character_id(character_id)
         with self._lock:
             profile = self._read_profile_unlocked(canonical)
-            new_name = profile["name"] if name is None else name
-            new_description = (
-                profile["description"] if description is None else description
-            )
             clean_name, clean_description = self._validate_text(
-                new_name, new_description
+                profile["name"] if name is None else name,
+                profile["description"] if description is None else description,
             )
             self._assert_unique_name(clean_name, exclude_id=canonical)
             profile["name"] = clean_name
@@ -582,11 +667,15 @@ class CharacterStore:
         original_filename: str,
         *,
         label: str = "",
+        role: str | None = None,
         content_type: str | None = None,
     ) -> dict[str, Any]:
         canonical = validate_character_id(character_id)
         media_type = self._validate_media_type(media_type)
         clean_label = self._validate_label(label)
+        clean_role = self._validate_media_role(
+            media_type, DEFAULT_MEDIA_ROLES[media_type] if role is None else role
+        )
         with self._lock:
             profile = self._read_profile_unlocked(canonical)
             collection = MEDIA_COLLECTIONS[media_type]
@@ -605,7 +694,12 @@ class CharacterStore:
             try:
                 os.replace(temporary, destination)
                 profile[collection].append(
-                    {"id": media_id, "file": relative.as_posix(), "label": clean_label}
+                    {
+                        "id": media_id,
+                        "file": relative.as_posix(),
+                        "label": clean_label,
+                        "role": clean_role,
+                    }
                 )
                 self._atomic_write_json(self._profile_path(canonical), profile)
             except Exception:
@@ -626,6 +720,7 @@ class CharacterStore:
         media_id: str,
         *,
         label: str | object = _UNSET,
+        role: str | object = _UNSET,
         source: BinaryIO | None = None,
         original_filename: str | None = None,
         content_type: str | None = None,
@@ -636,6 +731,8 @@ class CharacterStore:
             media_type, _, record = self._find_media(profile, media_id)
             if label is not _UNSET:
                 record["label"] = self._validate_label(label)
+            if role is not _UNSET:
+                record["role"] = self._validate_media_role(media_type, role)
             directory = self._character_dir(canonical)
             old_path = self._media_file_path(directory, record, media_type)
             new_path = old_path
@@ -779,7 +876,8 @@ class CharacterStore:
                 )
             return path
 
-    def resolve_selected_media(self, character_id: str) -> dict[str, Path]:
+    def resolve_selected_references(self, character_id: str) -> dict[str, Any]:
+        """Resolve validated active records and paths by UUID, never by array position."""
         canonical = validate_character_id(character_id)
         with self._lock:
             profile = self._read_profile_unlocked(canonical)
@@ -794,48 +892,58 @@ class CharacterStore:
                 )
             image_records = {record["id"]: record for record in profile["images"]}
             audio_records = {record["id"]: record for record in profile["audio"]}
-            selected_records = {
-                "image_1": ("image", image_records[defaults["image_1"]]),
-                "image_2": ("image", image_records[defaults["image_2"]]),
-                "audio": ("audio", audio_records[defaults["audio"]]),
-            }
-            paths: dict[str, Path] = {}
+            try:
+                records = {
+                    "image_1": image_records[defaults["image_1"]],
+                    "image_2": image_records[defaults["image_2"]],
+                    "audio": audio_records[defaults["audio"]],
+                }
+            except KeyError as exc:
+                raise MissingMedia(
+                    f'Character "{profile["name"]}" has a selected media UUID that is missing.'
+                ) from exc
             directory = self._character_dir(canonical)
-            for slot, (media_type, record) in selected_records.items():
+            paths: dict[str, Path] = {}
+            for slot, record in records.items():
+                media_type = "audio" if slot == "audio" else "image"
+                try:
+                    self._validate_media_role(media_type, record.get("role"))
+                except InvalidProfile as exc:
+                    raise InvalidProfile(
+                        f'Character "{profile["name"]}" selected {slot} has an invalid role: {exc}'
+                    ) from exc
                 path = self._media_file_path(directory, record, media_type)
                 if not path.is_file():
                     raise MissingMedia(
                         f'Character "{profile["name"]}" selected {slot} media file is missing.'
                     )
                 paths[slot] = path
-            return paths
+            return {
+                "profile": copy.deepcopy(profile),
+                "records": copy.deepcopy(records),
+                "paths": paths,
+            }
+
+    def resolve_selected_media(self, character_id: str) -> dict[str, Path]:
+        return self.resolve_selected_references(character_id)["paths"]
 
     def fingerprint(self, character_id: str) -> str:
-        """Hash character metadata, default IDs, and only the three selected files."""
+        """Hash prompt/output-relevant character state and only selected files."""
         canonical = validate_character_id(character_id)
         with self._lock:
-            profile = self._read_profile_unlocked(canonical)
-            paths = self.resolve_selected_media(canonical)
-            selected_records = {
-                slot: next(
-                    record
-                    for record in (
-                        profile["audio"] if slot == "audio" else profile["images"]
-                    )
-                    if record["id"] == profile["defaults"][slot]
-                )
-                for slot in DEFAULT_SLOTS
-            }
+            selected = self.resolve_selected_references(canonical)
+            profile = selected["profile"]
+            records = selected["records"]
             relevant = {
                 "schema_version": profile["schema_version"],
                 "id": profile["id"],
-                "name": profile["name"],
                 "description": profile["description"],
                 "defaults": profile["defaults"],
                 "selected": {
                     slot: {
-                        "id": selected_records[slot]["id"],
-                        "file": selected_records[slot]["file"],
+                        "id": records[slot]["id"],
+                        "file": records[slot]["file"],
+                        "role": records[slot]["role"],
                     }
                     for slot in DEFAULT_SLOTS
                 },
@@ -847,7 +955,7 @@ class CharacterStore:
             )
             for slot in DEFAULT_SLOTS:
                 digest.update(slot.encode("utf-8"))
-                with paths[slot].open("rb") as handle:
+                with selected["paths"][slot].open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
             return digest.hexdigest()

@@ -20,6 +20,14 @@ from .character_store import (
     get_default_store,
 )
 from .media import InvalidMedia
+from .scene_store import (
+    DuplicateSceneName,
+    InvalidScene,
+    InvalidSceneId,
+    SceneCorrupt,
+    SceneNotFound,
+    get_default_scene_store,
+)
 
 API_PREFIX = "/api/h3-character-ref-builder"
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -43,9 +51,11 @@ def _profile_response(profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def _error_status(error: Exception) -> int:
-    if isinstance(error, (ProfileNotFound, MediaNotFound, MissingMedia)):
+    if isinstance(error, (ProfileNotFound, MediaNotFound, MissingMedia, SceneNotFound)):
         return 404
-    if isinstance(error, (DuplicateCharacterName, MediaLimitReached)):
+    if isinstance(
+        error, (DuplicateCharacterName, MediaLimitReached, DuplicateSceneName)
+    ):
         return 409
     if isinstance(
         error,
@@ -55,6 +65,9 @@ def _error_status(error: Exception) -> int:
             InvalidProfile,
             InvalidMedia,
             ProfileCorrupt,
+            InvalidSceneId,
+            InvalidScene,
+            SceneCorrupt,
             ValueError,
         ),
     ):
@@ -124,6 +137,7 @@ def register_routes() -> None:
     from server import PromptServer
 
     routes = PromptServer.instance.routes
+    route_unset = object()
 
     async def list_characters(request):
         del request
@@ -185,7 +199,7 @@ def register_routes() -> None:
     async def create_media(request):
         try:
             fields, contents, filename, content_type = await _multipart_body(request)
-            unexpected = set(fields) - {"type", "label"}
+            unexpected = set(fields) - {"type", "label", "role"}
             if unexpected:
                 raise InvalidProfile(
                     f"Unsupported media fields: {', '.join(sorted(unexpected))}."
@@ -198,6 +212,7 @@ def register_routes() -> None:
                 io.BytesIO(contents),
                 filename,
                 label=fields.get("label", ""),
+                role=fields.get("role"),
                 content_type=content_type,
             )
             return web.json_response(
@@ -208,7 +223,7 @@ def register_routes() -> None:
 
     async def update_media(request):
         try:
-            label: str | object
+            fields: dict[str, Any]
             contents = None
             filename = None
             content_type = None
@@ -216,30 +231,27 @@ def register_routes() -> None:
                 fields, contents, filename, content_type = await _multipart_body(
                     request
                 )
-                unexpected = set(fields) - {"label"}
-                if unexpected:
-                    raise InvalidProfile(
-                        f"Unsupported media fields: {', '.join(sorted(unexpected))}."
-                    )
-                label = fields.get("label", route_unset)
             else:
-                payload = await _json_body(request)
-                if set(payload) != {"label"}:
-                    raise InvalidProfile(
-                        "A media JSON update must contain only 'label'."
-                    )
-                label = payload["label"]
-            if label is route_unset and contents is None:
+                fields = await _json_body(request)
+            unexpected = set(fields) - {"label", "role"}
+            if unexpected:
                 raise InvalidProfile(
-                    "Media update must include a label or replacement file."
+                    f"Unsupported media update fields: {', '.join(sorted(unexpected))}."
+                )
+            if not fields and contents is None:
+                raise InvalidProfile(
+                    "Media update must include a label, role, or replacement file."
                 )
             kwargs: dict[str, Any] = {
                 "source": io.BytesIO(contents) if contents is not None else None,
                 "original_filename": filename,
                 "content_type": content_type,
+                "label": fields.get("label", route_unset),
+                "role": fields.get("role", route_unset),
             }
-            if label is not route_unset:
-                kwargs["label"] = label
+            kwargs = {
+                key: value for key, value in kwargs.items() if value is not route_unset
+            }
             profile = get_default_store().update_media(
                 request.match_info["id"], request.match_info["media_id"], **kwargs
             )
@@ -285,6 +297,55 @@ def register_routes() -> None:
         except Exception as error:
             return _error_json(web, error)
 
+    async def list_scenes(request):
+        del request
+        try:
+            return web.json_response(
+                {"ok": True, "data": get_default_scene_store().list_scenes()}
+            )
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def get_scene(request):
+        try:
+            scene = get_default_scene_store().get_scene(request.match_info["id"])
+            return web.json_response({"ok": True, "data": scene})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def create_scene(request):
+        try:
+            payload = await _json_body(request)
+            if set(payload) - {"name", "definition"}:
+                raise InvalidScene("Unsupported scene fields.")
+            scene = get_default_scene_store().create_scene(
+                payload.get("name", ""), payload.get("definition", "")
+            )
+            return web.json_response({"ok": True, "data": scene}, status=201)
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def update_scene(request):
+        try:
+            payload = await _json_body(request)
+            if set(payload) - {"name", "definition"}:
+                raise InvalidScene("Unsupported scene fields.")
+            scene = get_default_scene_store().update_scene(
+                request.match_info["id"],
+                name=payload.get("name"),
+                definition=payload.get("definition"),
+            )
+            return web.json_response({"ok": True, "data": scene})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def delete_scene(request):
+        try:
+            get_default_scene_store().delete_scene(request.match_info["id"])
+            return web.json_response({"ok": True, "data": None})
+        except Exception as error:
+            return _error_json(web, error)
+
     async def manager_page(request):
         if request.path.endswith("/"):
             raise web.HTTPFound(request.path.rstrip("/"))
@@ -303,7 +364,6 @@ def register_routes() -> None:
             raise web.HTTPNotFound()
         return web.FileResponse(path, headers={"Cache-Control": "no-store"})
 
-    route_unset = object()
     routes.get(f"{API_PREFIX}/characters")(list_characters)
     routes.get(f"{API_PREFIX}/characters/{{id}}")(get_character)
     routes.post(f"{API_PREFIX}/characters")(create_character)
@@ -314,6 +374,11 @@ def register_routes() -> None:
     routes.delete(f"{API_PREFIX}/characters/{{id}}/media/{{media_id}}")(delete_media)
     routes.get(f"{API_PREFIX}/characters/{{id}}/media/{{media_id}}")(serve_media)
     routes.put(f"{API_PREFIX}/characters/{{id}}/defaults")(update_defaults)
+    routes.get(f"{API_PREFIX}/scenes")(list_scenes)
+    routes.get(f"{API_PREFIX}/scenes/{{id}}")(get_scene)
+    routes.post(f"{API_PREFIX}/scenes")(create_scene)
+    routes.put(f"{API_PREFIX}/scenes/{{id}}")(update_scene)
+    routes.delete(f"{API_PREFIX}/scenes/{{id}}")(delete_scene)
     routes.get("/character-manager")(manager_page)
     routes.get("/character-manager/")(manager_page)
     routes.get("/character-manager/assets/{filename}")(manager_asset)

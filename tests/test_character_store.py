@@ -85,13 +85,13 @@ def complete_profile(store: CharacterStore, name="Ari", extra=False):
     return store.get_profile(character_id), image_3, audio_2
 
 
-def test_create_generates_v2_uuid_and_lists_case_insensitively(store):
+def test_create_generates_v3_uuid_and_lists_case_insensitively(store):
     zed = store.create_profile("zed")
     alpha = store.create_profile("Alpha")
 
     assert str(uuid.UUID(zed["id"])) == zed["id"]
     assert zed == {
-        "schema_version": 2,
+        "schema_version": 3,
         "id": zed["id"],
         "name": "zed",
         "description": "",
@@ -143,7 +143,7 @@ def test_v1_migration_preserves_defaults_and_is_idempotent(store):
     first_json = (directory / "profile.json").read_bytes()
     selected = store.resolve_selected_media(character_id)
 
-    assert migrated["schema_version"] == 2
+    assert migrated["schema_version"] == 3
     assert len(migrated["images"]) == 2
     assert len(migrated["audio"]) == 1
     assert migrated["defaults"]["image_1"] == migrated["images"][0]["id"]

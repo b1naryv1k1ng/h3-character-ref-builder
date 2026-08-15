@@ -64,7 +64,7 @@ def test_character_library_api_end_to_end(tmp_path, monkeypatch):
             assert created_response.status == 201
             created = (await created_response.json())["data"]
             character_id = created["id"]
-            assert created["schema_version"] == 2
+            assert created["schema_version"] == 3
             assert created["generation_ready"] is False
 
             image_ids = []

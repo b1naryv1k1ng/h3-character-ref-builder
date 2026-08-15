@@ -2,45 +2,68 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 const NODE_TYPE = "H3CharacterReference";
-const API_PATH = "/api/h3-character-ref-builder/characters";
+const API_PREFIX = "/api/h3-character-ref-builder";
+const NO_SCENE = "__h3_no_scene_preset__";
 
 let charactersById = new Map();
+let scenesById = new Map();
 let refreshPromise = null;
 
-function characterLabel(value) {
+function labelForCharacter(value) {
   if (!value) return "No characters available";
   return charactersById.get(String(value)) || `Missing profile (${value})`;
 }
 
-function findCharacterWidget(node) {
-  return node.widgets?.find((widget) => widget.name === "character");
+function labelForScene(value) {
+  if (value === NO_SCENE) return "(No Scene Preset)";
+  return scenesById.get(String(value)) || `Missing scene (${value})`;
 }
 
-function applyCharactersToNode(node, characters) {
+function findWidget(node, name) {
+  return node.widgets?.find((widget) => widget.name === name);
+}
+
+function applyOptions(node, widgetName, items, fallback, labeler, chooseFirst) {
   if (node.comfyClass !== NODE_TYPE && node.type !== NODE_TYPE) return;
-  const widget = findCharacterWidget(node);
+  const widget = findWidget(node, widgetName);
   if (!widget) return;
   const current = typeof widget.value === "string" ? widget.value : String(widget.value ?? "");
-  const ids = characters.map((character) => character.id);
-  if (current && !ids.includes(current)) ids.unshift(current);
-  if (!ids.length) ids.push("");
+  const values = items.map((item) => item.id);
+  if (fallback && !values.includes(fallback)) values.unshift(fallback);
+  if (current && !values.includes(current)) values.unshift(current);
+  if (!values.length) values.push("");
   widget.options ||= {};
-  widget.options.values = ids;
-  widget.options.getOptionLabel = characterLabel;
-  if (!current && characters.length) widget.value = characters[0].id;
+  widget.options.values = values;
+  widget.options.getOptionLabel = labeler;
+  if (!current) widget.value = chooseFirst && items.length ? items[0].id : fallback;
   node.setDirtyCanvas?.(true, true);
 }
 
-async function fetchCharacters() {
+function applyCatalogs(node, catalogs) {
+  applyOptions(node, "character", catalogs.characters, "", labelForCharacter, true);
+  applyOptions(node, "scene", catalogs.scenes, NO_SCENE, labelForScene, false);
+}
+
+async function fetchCatalogs() {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
-    const response = await api.fetchApi(API_PATH, { cache: "no-store" });
-    const payload = await response.json();
-    if (!response.ok || !payload.ok || !Array.isArray(payload.data)) {
-      throw new Error(payload?.error?.message || "Could not load H3 character profiles.");
+    const [characterResponse, sceneResponse] = await Promise.all([
+      api.fetchApi(`${API_PREFIX}/characters`, { cache: "no-store" }),
+      api.fetchApi(`${API_PREFIX}/scenes`, { cache: "no-store" }),
+    ]);
+    const [characters, scenes] = await Promise.all([
+      characterResponse.json(),
+      sceneResponse.json(),
+    ]);
+    if (!characterResponse.ok || !characters.ok || !Array.isArray(characters.data)) {
+      throw new Error(characters?.error?.message || "Could not load H3 character profiles.");
     }
-    charactersById = new Map(payload.data.map((character) => [character.id, character.name]));
-    return payload.data;
+    if (!sceneResponse.ok || !scenes.ok || !Array.isArray(scenes.data)) {
+      throw new Error(scenes?.error?.message || "Could not load H3 Scene Presets.");
+    }
+    charactersById = new Map(characters.data.map((item) => [item.id, item.name]));
+    scenesById = new Map(scenes.data.map((item) => [item.id, item.name]));
+    return { characters: characters.data, scenes: scenes.data };
   })();
   try {
     return await refreshPromise;
@@ -51,7 +74,7 @@ async function fetchCharacters() {
 
 async function refreshNode(node) {
   try {
-    applyCharactersToNode(node, await fetchCharacters());
+    applyCatalogs(node, await fetchCatalogs());
   } catch (error) {
     console.error("[H3 Character Ref Builder]", error);
   }
@@ -59,8 +82,8 @@ async function refreshNode(node) {
 
 async function refreshAllNodes() {
   try {
-    const characters = await fetchCharacters();
-    for (const node of app.graph?._nodes || []) applyCharactersToNode(node, characters);
+    const catalogs = await fetchCatalogs();
+    for (const node of app.graph?._nodes || []) applyCatalogs(node, catalogs);
   } catch (error) {
     console.error("[H3 Character Ref Builder]", error);
   }
@@ -81,7 +104,7 @@ app.registerExtension({
   commands: [
     {
       id: "h3.open-character-manager",
-      label: "H3 Character Manager",
+      label: "H3 Reference Manager",
       icon: "pi pi-users",
       function: openManager,
     },
@@ -103,7 +126,7 @@ app.registerExtension({
     const originalMenu = nodeType.prototype.getExtraMenuOptions;
     nodeType.prototype.getExtraMenuOptions = function (_, options) {
       const result = originalMenu?.apply(this, arguments);
-      options.push({ content: "Open H3 Character Manager", callback: openManager });
+      options.push({ content: "Open H3 Reference Manager", callback: openManager });
       return result;
     };
   },

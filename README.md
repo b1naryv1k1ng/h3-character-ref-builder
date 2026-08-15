@@ -1,22 +1,24 @@
 # H3 Character Ref Builder
 
-H3 Character Ref Builder is a ComfyUI custom node for organizing reusable character reference libraries. Each character can keep multiple labeled image and audio references while a workflow receives only that character's two active images and one active audio reference.
+H3 Character Ref Builder is a ComfyUI custom node for organizing reusable character references, reusable Scene Presets, and deterministic MiniMax H3 Ref2VA prompts.
 
-This feature is for organization. The extension does not inspect prompts, automatically choose references, generate H3 prompts, use AI/VLM/LLM features, or support video.
+Pick a character, pick an optional environment, describe what happens, and the node emits the active two images, active audio reference, and a complete six-section H3 prompt.
+
+V3 performs deterministic text assembly only. It does not use an LLM, VLM, external AI API, prompt rewriting, image analysis, automatic reference selection, scene generation, or video references.
 
 ## Features
 
-- Browser-based Character Manager served by ComfyUI at `/character-manager`
-- Up to 9 saved image references and 3 saved audio references per character
-- Editable labels, image previews, audio playback, replacement, and deletion
-- Explicit `Image 1`, `Image 2`, and `Active Audio` selections
-- Immutable character and media UUIDs, independent of filenames and array positions
-- Stable replacement: changing a reference's file or extension preserves its media UUID
-- Clear generation-readiness status for incomplete profiles
-- Compact ComfyUI node with exactly `IMAGE`, `IMAGE`, and `AUDIO` outputs
-- Selected-output cache invalidation that ignores unused references and other characters
-- Automatic, safe migration of existing schema-V1 characters
-- Filesystem storage beneath ComfyUI's configured user directory
+- One browser-based **H3 Reference Manager** at `/character-manager`
+- **Characters** and **Scene Presets** tabs in the existing dark manager UI
+- Up to 9 labeled image references and 3 labeled audio references per character
+- Immutable character, media, and scene UUIDs
+- Two active image defaults and one active audio default per generation
+- A semantic role on every reference for deterministic prompt construction
+- Image previews, audio playback, replacement, deletion, and drag/drop upload
+- Independent reusable environment definitions selected as `<Subject 2>`
+- Compact ComfyUI node with `image_1`, `image_2`, `audio`, and `prompt` outputs
+- Selected-output/prompt cache invalidation isolated from unused references and unrelated scenes
+- Automatic safe migration from V1 and V2 character profiles
 
 ## Installation
 
@@ -27,129 +29,149 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/b1naryv1k1ng/h3-character-ref-builder.git
 ```
 
-Restart ComfyUI after cloning or updating.
+Restart ComfyUI after cloning or updating. The project adds no Python runtime dependencies; it uses Pillow, PyTorch, and PyAV from a normal current ComfyUI installation.
 
-This project adds no Python runtime dependencies. It uses Pillow, PyTorch, and PyAV from a normal current ComfyUI installation.
+## V3 workflow
 
-## Usage
+1. Open **Extensions → H3 Character Ref Builder → H3 Reference Manager**.
+2. In **Characters**, create or select a character and maintain its reference library.
+3. Give each active reference the semantic role it contributes.
+4. Select two different images as **Image 1** and **Image 2**, plus one **Active Audio** reference.
+5. Optionally create reusable environments under **Scene Presets**.
+6. Add **H3 Character Reference** from **H3 → Reference** to a workflow.
+7. Pick a Character and optional Scene Preset, then enter **Video / Action Description**.
+8. Optionally customize **Overall Soundscape** and **Non-Diegetic Music**.
+9. Connect `image_1`, `image_2`, and `audio` to the H3 reference inputs.
+10. Connect `prompt` to the MiniMax H3 prompt input.
 
-1. In ComfyUI, open **Extensions → H3 Character Ref Builder → H3 Character Manager**. An H3 node context-menu action is also available as a compatibility fallback.
-2. Create or select a character and save its name before adding references.
-3. Add up to nine images and three audio clips. Give each reference a descriptive label.
-4. Select two different images as **Image 1** and **Image 2**.
-5. Select one clip as **Active Audio**.
-6. Save the character. The readiness banner confirms when all three defaults are valid.
-7. Add **H3 Character Reference** from **H3 → Reference** to a workflow.
-8. Select the character and connect `image_1`, `image_2`, and `audio` downstream.
+The node does not rewrite or enhance the action description. It trims surrounding whitespace, places the text under `detailed_description`, and adds `[Shot 1]` only when the user has not already supplied it.
 
-The manager allows incomplete characters for gradual setup, but the node will give a useful execution error until two images and one audio reference are selected. Deleting an active reference clears that default; the extension never silently substitutes a different reference.
+## Character reference libraries
 
-The browser shows character names, but workflow JSON stores each character's immutable UUID. Renaming a character therefore does not break workflows. If a selected character is deleted, execution reports that it no longer exists instead of selecting another profile.
+Each character can store up to nine images and three audio clips. References have user-editable labels and immutable media UUIDs. Replacing a file preserves that UUID even when its extension changes.
 
-## Node contract
-
-The node intentionally remains compact:
+The node outputs only the selected defaults:
 
 ```text
-H3 Character Reference
-
-Character: Ari
-
-image_1  IMAGE
-image_2  IMAGE
-audio    AUDIO
+IMAGE  image_1
+IMAGE  image_2
+AUDIO  audio
+STRING prompt
 ```
 
-At execution time it resolves `defaults.image_1`, `defaults.image_2`, and `defaults.audio` to media records by UUID, loads those files, and emits native ComfyUI values. It never relies on collection order and does not expose every library item as a node output.
+The first three outputs retain their original positions for existing workflows. Defaults are resolved by media UUID, never by collection order.
+
+### Image roles
+
+| Stored role | Manager label | Prompt contribution |
+|---|---|---|
+| `face_identity` | Face / Identity | Facial identity, structure, eyes, hair, and recognizable facial detail |
+| `full_body_identity` | Full Body / Wardrobe | Full-body appearance, proportions, wardrobe, colors, and distinctive details |
+| `alternate_identity` | Alternate Identity Angle | Additional identity, anatomy, and alternate-angle detail |
+| `wardrobe` | Wardrobe / Clothing | Clothing details, colors, and accessories |
+| `pose_orientation` | Pose / Orientation | Body orientation and pose only; not source background, lighting, or framing |
+| `expression` | Expression | Facial expression and performance only; not source background, lighting, or framing |
+| `general` | General Reference | Additional appearance detail |
+
+Only the two active image defaults contribute to `<Subject 1>`. They are complementary references for one character, not separate subjects.
+
+### Audio roles
+
+| Stored role | Manager label | Prompt contribution |
+|---|---|---|
+| `voice_identity` | Voice Identity | Voice timbre, accent, pacing, and delivery |
+| `delivery_emotion` | Delivery / Emotion | Vocal tone, emotion, intensity, and pacing |
+| `general` | General Audio Reference | General vocal characteristics and delivery |
+
+Character audio is always an H3 audio reference. Generated retention uses `<Audio 1>: reference`; it never uses `fully_preserved` for audio and explicitly says not to copy the source signal, dialogue, or words.
+
+### Character Identity Details
+
+The optional character description is presented as **Character Identity Details** and is appended as stable user-authored information inside `<Subject 1>`. The manager/store removes a pasted leading `<Subject 1> is` prefix to avoid duplicated syntax. It does not infer characteristics from files, labels, or images.
+
+## Scene Presets
+
+Scene Presets are independent reusable environment definitions managed in the second tab. Each has an immutable UUID, editable name, and multiline definition body. Renaming does not break workflows because the node stores the UUID.
+
+When selected, the stored body becomes:
+
+```text
+<Subject 2> is {scene definition}
+```
+
+The definition is preserved except for surrounding whitespace. A pasted leading `<Subject 2> is` prefix is removed on save. No presets are seeded automatically.
+
+The stable `(No Scene Preset)` option omits `<Subject 2>` from subject definitions, summary, and retention analysis. A deleted UUID produces an explicit missing-scene error rather than silently choosing another preset.
+
+## Deterministic Ref2VA prompt builder
+
+Every generated prompt contains exactly these sections in order:
+
+```text
+subject_definitions:
+
+summary:
+
+retention_analysis:
+
+detailed_description:
+
+overall_soundscape:
+
+non_diegetic_music:
+```
+
+`subject_definitions` combines the two active image roles into one `<Subject 1>`, defines `<Audio 1>` from the active audio role, and adds the selected scene as `<Subject 2>`. The short summary begins with `[reference generation + audio reference]`. The user action appears only in `detailed_description`.
+
+The default soundscape is:
+
+```text
+Natural diegetic ambience appropriate to the scene, with synchronized physical sounds caused by the visible action.
+```
+
+Non-diegetic music defaults to `N/A`; music is never inferred.
 
 ## Supported media
 
-Images:
+Images: PNG, JPEG/JPG, and WebP.
 
-- PNG
-- JPEG/JPG
-- WebP
+Audio: WAV, MP3, FLAC, M4A, OGG, and AAC. Codec support follows the PyAV/FFmpeg stack bundled with ComfyUI. Files retain supported upload extensions and are not transcoded.
 
-Audio:
+## Storage and schemas
 
-- WAV
-- MP3
-- FLAC
-- M4A
-- OGG
-- AAC
-
-Audio support follows the codecs available through the PyAV/FFmpeg stack bundled with the user's ComfyUI installation. WAV is supported in a normal installation. Files retain their supported upload extension and are not transcoded.
-
-## Data storage and schema
-
-Profiles and media are not written into this repository. The extension uses `folder_paths.get_user_directory()` and stores data as:
+Data lives beneath `folder_paths.get_user_directory()`:
 
 ```text
 <ComfyUI user directory>/
 └── h3-character-ref-builder/
-    └── characters/
-        └── <character UUID>/
-            ├── profile.json
-            ├── images/
-            │   ├── <media UUID>.png
-            │   └── <media UUID>.jpg
-            └── audio/
-                └── <media UUID>.wav
+    ├── characters/
+    │   └── <character UUID>/
+    │       ├── profile.json
+    │       ├── images/<media UUID>.<ext>
+    │       └── audio/<media UUID>.<ext>
+    └── scenes/
+        └── <scene UUID>/
+            └── scene.json
 ```
 
-Schema version 2 uses immutable media IDs and UUID-based defaults:
+Character schema V3 adds `role` to each V2 media record while retaining character/media UUIDs, labels, paths, defaults, and description. Scene schema V1 stores `schema_version`, `id`, `name`, and `definition`.
 
-```json
-{
-  "schema_version": 2,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "name": "Ari",
-  "description": "",
-  "images": [
-    {
-      "id": "11111111-1111-4111-8111-111111111111",
-      "file": "images/11111111-1111-4111-8111-111111111111.png",
-      "label": "Front portrait"
-    },
-    {
-      "id": "22222222-2222-4222-8222-222222222222",
-      "file": "images/22222222-2222-4222-8222-222222222222.webp",
-      "label": "Full body"
-    }
-  ],
-  "audio": [
-    {
-      "id": "33333333-3333-4333-8333-333333333333",
-      "file": "audio/33333333-3333-4333-8333-333333333333.wav",
-      "label": "Neutral voice"
-    }
-  ],
-  "defaults": {
-    "image_1": "11111111-1111-4111-8111-111111111111",
-    "image_2": "22222222-2222-4222-8222-222222222222",
-    "audio": "33333333-3333-4333-8333-333333333333"
-  }
-}
-```
+All JSON writes use a temporary file, flush it to disk, and atomically replace the prior file. UUIDs, ownership, roles, media types, limits, filenames, content, and paths are validated before use.
 
-Profile JSON writes use a temporary file, flush it to disk, and atomically replace the prior profile. Media replacement writes and validates the new file before updating the profile; if the extension changed, the obsolete file is removed only after the profile update succeeds.
+### Migration
 
-## Migration from schema V1
+Existing V2 profiles migrate automatically on first read without renaming or moving media:
 
-Existing V1 profiles migrate automatically the first time they are read. The migration:
+- active Image 1 → `face_identity`
+- active Image 2 → `full_body_identity`
+- active Audio → `voice_identity`
+- unused images/audio → `general`
 
-- copies `reference_image_1`, `reference_image_2`, and `reference_audio` into UUID-addressed V2 library files;
-- preserves their old roles in `defaults.image_1`, `defaults.image_2`, and `defaults.audio`;
-- uses deterministic media UUIDs so retrying is idempotent;
-- validates the copied media and atomically writes the V2 profile before deleting legacy files; and
-- cleans up partial copies and leaves the original V1 profile/media intact if migration fails.
+An already present valid role is preserved. The update is atomic and idempotent.
 
-Existing workflow character UUIDs remain unchanged, so migrated workflows resolve the same two images and audio as before.
+V1 profiles still migrate safely into the UUID-addressed library. Their original two images and audio retain the same default behavior and receive the corresponding V3 roles. Legacy files are deleted only after copied media validates and the new profile is atomically written.
 
 ## HTTP API
-
-The manager uses a namespaced API on ComfyUI's existing server:
 
 ```text
 GET    /api/h3-character-ref-builder/characters
@@ -162,29 +184,30 @@ POST   /api/h3-character-ref-builder/characters/{character_id}/media
 GET    /api/h3-character-ref-builder/characters/{character_id}/media/{media_id}
 PUT    /api/h3-character-ref-builder/characters/{character_id}/media/{media_id}
 DELETE /api/h3-character-ref-builder/characters/{character_id}/media/{media_id}
-
 PUT    /api/h3-character-ref-builder/characters/{character_id}/defaults
+
+GET    /api/h3-character-ref-builder/scenes
+GET    /api/h3-character-ref-builder/scenes/{scene_id}
+POST   /api/h3-character-ref-builder/scenes
+PUT    /api/h3-character-ref-builder/scenes/{scene_id}
+DELETE /api/h3-character-ref-builder/scenes/{scene_id}
 ```
 
-Creating media uses multipart form data with `type` (`image` or `audio`), optional `label`, and `file`. Updating media accepts JSON containing only `label`, or multipart data containing an optional `label` and/or replacement `file`. Replacing a file retains the media UUID even when its extension changes.
+Media creation accepts multipart `type`, `label`, `role`, and `file`. Media updates accept JSON `label` and/or `role`, or multipart metadata plus an optional replacement file. Scene list responses contain only UUID and name; detail responses include the definition.
 
-The defaults request contains exactly `image_1`, `image_2`, and `audio`, whose values are media UUIDs or `null`. Responses use `{"ok": true, "data": ...}` or `{"ok": false, "error": {"message": "..."}}`.
-
-Character UUIDs, media UUIDs, media ownership, type, collection limits, filenames, extensions, default-slot types, and uploaded content are validated. The preview endpoint resolves only UUID-addressed media belonging to the requested character and never accepts an arbitrary filesystem path.
+Responses use `{"ok": true, "data": ...}` or `{"ok": false, "error": {"message": "..."}}`. Preview routes resolve only media UUIDs belonging to the requested character and never accept arbitrary filesystem paths.
 
 ## Cache behavior
 
-The node's `IS_CHANGED` fingerprint includes the selected character's name and description, the three default media UUIDs, and the contents and paths of only those selected files. It changes when a selected file is replaced, a default selection changes, or relevant selected-profile metadata changes. Relabeling or replacing an unused reference does not invalidate the current outputs, and modifying another character does not affect this node.
+The node fingerprint includes selected files, selected media UUIDs and roles, defaults, Character Identity Details, selected scene UUID and definition, and the node's prompt-authoring fields. It deliberately excludes unused media, media labels, character names, scene names, unrelated characters, and unrelated scenes where those values cannot affect outputs or prompt text.
 
 ## Tests
-
-The tests use temporary storage rather than the real ComfyUI user directory:
 
 ```bash
 python -m pytest
 ```
 
-The suite covers V1 migration and idempotence, UUID identity, image/audio limits, label and replacement behavior, obsolete-extension cleanup, deletion and default clearing, default type validation, incomplete-profile errors, UUID-based node resolution, the exact node output contract, selected-output fingerprints, malformed profiles, path traversal protection, and the HTTP media/default API. Native tensor/audio loader tests run when the corresponding ComfyUI dependencies are installed.
+The suite covers V1 and V2 migration, role validation and UUID stability, media limits and replacement, Scene Preset CRUD/security, exact prompt structure and role semantics, action/sound/music preservation, UUID-based node resolution, API behavior, and prompt-aware cache isolation. Native tensor/audio loader tests run when the relevant ComfyUI dependencies are installed.
 
 ## License
 
