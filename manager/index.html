@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>H3 Character Manager</title>
+    <link rel="stylesheet" href="character-manager/assets/character-manager.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">H3 Character Ref Builder</span>
+          <h1>Character Manager</h1>
+        </div>
+        <button id="new-character" class="button primary" type="button">+ New Character</button>
+      </header>
+
+      <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+
+      <main class="workspace">
+        <aside class="sidebar" aria-label="Characters">
+          <div class="sidebar-heading">
+            <h2>Characters</h2>
+            <span id="character-count" class="count">0</span>
+          </div>
+          <div id="character-list" class="character-list"></div>
+          <div id="empty-list" class="empty-list" hidden>
+            No characters yet. Create one to get started.
+          </div>
+        </aside>
+
+        <section class="editor" aria-label="Character editor">
+          <div id="editor-empty" class="editor-empty">
+            <div class="empty-glyph">H3</div>
+            <h2>Select a character</h2>
+            <p>Choose a profile from the list or create a new one.</p>
+          </div>
+
+          <form id="editor-form" hidden>
+            <div class="editor-title-row">
+              <div>
+                <span class="eyebrow">Character Editor</span>
+                <h2 id="editor-title">New Character</h2>
+              </div>
+              <span id="character-id" class="character-id"></span>
+            </div>
+
+            <label class="field">
+              <span>Name <strong aria-hidden="true">*</strong></span>
+              <input id="name" name="name" maxlength="200" autocomplete="off" required />
+            </label>
+
+            <label class="field">
+              <span>Character Description <small>optional, reserved for future use</small></span>
+              <textarea id="description" name="description" maxlength="20000" rows="5"></textarea>
+            </label>
+
+            <div class="media-grid">
+              <section class="media-card" data-slot="reference_image_1" tabindex="0">
+                <div class="media-heading">
+                  <div><span class="slot-number">01</span><h3>Reference Image 1</h3></div>
+                  <button class="button secondary choose-file" type="button">Choose</button>
+                </div>
+                <div class="image-preview preview-surface">
+                  <img alt="Reference image 1 preview" hidden />
+                  <span class="drop-prompt">Drop PNG, JPEG, or WebP here</span>
+                </div>
+                <input type="file" accept="image/png,image/jpeg,image/webp" hidden />
+              </section>
+
+              <section class="media-card" data-slot="reference_image_2" tabindex="0">
+                <div class="media-heading">
+                  <div><span class="slot-number">02</span><h3>Reference Image 2</h3></div>
+                  <button class="button secondary choose-file" type="button">Choose</button>
+                </div>
+                <div class="image-preview preview-surface">
+                  <img alt="Reference image 2 preview" hidden />
+                  <span class="drop-prompt">Drop PNG, JPEG, or WebP here</span>
+                </div>
+                <input type="file" accept="image/png,image/jpeg,image/webp" hidden />
+              </section>
+
+              <section class="media-card audio-card" data-slot="reference_audio" tabindex="0">
+                <div class="media-heading">
+                  <div><span class="slot-number">03</span><h3>Reference Audio</h3></div>
+                  <button class="button secondary choose-file" type="button">Choose</button>
+                </div>
+                <div class="audio-preview preview-surface">
+                  <audio controls hidden></audio>
+                  <span class="drop-prompt">Drop WAV, MP3, FLAC, M4A, OGG, or AAC here</span>
+                </div>
+                <input type="file" accept="audio/wav,audio/mpeg,audio/flac,audio/mp4,audio/ogg,audio/aac,.m4a" hidden />
+              </section>
+            </div>
+
+            <div class="editor-actions">
+              <button id="delete-character" class="button danger" type="button">Delete</button>
+              <div class="right-actions">
+                <span id="dirty-note" class="dirty-note" hidden>Unsaved changes</span>
+                <button id="save-character" class="button primary" type="submit">Save Character</button>
+              </div>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog" class="dialog-card">
+        <h2 id="confirm-title">Confirm</h2>
+        <p id="confirm-message"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="button secondary">Cancel</button>
+          <button value="confirm" class="button danger">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="character-manager/assets/character-manager.js"></script>
+  </body>
+</html>
