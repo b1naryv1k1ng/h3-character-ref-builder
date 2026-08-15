@@ -33,7 +33,7 @@ class H3CharacterReference:
     RETURN_NAMES = ("image_1", "image_2", "audio")
     FUNCTION = "load_character"
     CATEGORY = "H3/Reference"
-    DESCRIPTION = "Loads two images and one audio reference from a saved character profile."
+    DESCRIPTION = "Loads the active two images and audio from a character profile."
 
     @classmethod
     def VALIDATE_INPUTS(cls, character):
@@ -43,8 +43,6 @@ class H3CharacterReference:
             validate_character_id(character)
         except InvalidCharacterId as exc:
             return str(exc)
-        # Existence is deliberately checked by execution/fingerprinting so a deleted
-        # UUID produces the package's explicit missing-profile error, not a combo error.
         return True
 
     @classmethod
@@ -58,13 +56,9 @@ class H3CharacterReference:
             raise ValueError(
                 "No character selected. Create a profile in H3 Character Manager."
             )
-        store = get_default_store()
-        # Resolve all paths before decoding so incomplete profiles fail with a clear slot.
-        image_1_path = store.media_path(character, "reference_image_1")
-        image_2_path = store.media_path(character, "reference_image_2")
-        audio_path = store.media_path(character, "reference_audio")
+        paths = get_default_store().resolve_selected_media(character)
         return (
-            load_image(image_1_path),
-            load_image(image_2_path),
-            load_audio(audio_path),
+            load_image(paths["image_1"]),
+            load_image(paths["image_2"]),
+            load_audio(paths["audio"]),
         )

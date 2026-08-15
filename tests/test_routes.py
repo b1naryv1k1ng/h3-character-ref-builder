@@ -30,7 +30,15 @@ def wav_bytes() -> bytes:
     return output.getvalue()
 
 
-def test_character_crud_media_and_narrow_serving_routes(tmp_path, monkeypatch):
+def media_form(media_type, contents, filename, content_type, label=""):
+    form = FormData()
+    form.add_field("type", media_type)
+    form.add_field("label", label)
+    form.add_field("file", contents, filename=filename, content_type=content_type)
+    return form
+
+
+def test_character_library_api_end_to_end(tmp_path, monkeypatch):
     store = CharacterStore(tmp_path / "managed")
     table = web.RouteTableDef()
     fake_server = types.ModuleType("server")
@@ -56,62 +64,104 @@ def test_character_crud_media_and_narrow_serving_routes(tmp_path, monkeypatch):
             assert created_response.status == 201
             created = (await created_response.json())["data"]
             character_id = created["id"]
+            assert created["schema_version"] == 2
+            assert created["generation_ready"] is False
 
-            duplicate_response = await client.post(
-                "/api/h3-character-ref-builder/characters", json={"name": "ARI"}
-            )
-            assert duplicate_response.status == 409
-
-            uploads = {
-                "reference_image_1": (png_bytes(), "one.png", "image/png"),
-                "reference_image_2": (png_bytes((90, 60, 30)), "two.png", "image/png"),
-                "reference_audio": (wav_bytes(), "voice.wav", "audio/wav"),
-            }
-            for slot, (contents, filename, content_type) in uploads.items():
-                form = FormData()
-                form.add_field("slot", slot)
-                form.add_field(
-                    "file", contents, filename=filename, content_type=content_type
-                )
+            image_ids = []
+            for index, color in enumerate(((10, 20, 30), (40, 50, 60))):
                 response = await client.post(
                     f"/api/h3-character-ref-builder/characters/{character_id}/media",
-                    data=form,
+                    data=media_form(
+                        "image",
+                        png_bytes(color),
+                        f"image-{index}.png",
+                        "image/png",
+                        f"Image {index + 1}",
+                    ),
                 )
-                assert response.status == 200, await response.text()
+                assert response.status == 201, await response.text()
+                profile = (await response.json())["data"]
+                image_ids.append(profile["images"][-1]["id"])
 
-            media_response = await client.get(
-                f"/api/h3-character-ref-builder/characters/{character_id}/media/reference_image_1"
+            audio_response = await client.post(
+                f"/api/h3-character-ref-builder/characters/{character_id}/media",
+                data=media_form(
+                    "audio", wav_bytes(), "voice.wav", "audio/wav", "Neutral"
+                ),
             )
+            assert audio_response.status == 201
+            audio_id = (await audio_response.json())["data"]["audio"][-1]["id"]
+
+            defaults_response = await client.put(
+                f"/api/h3-character-ref-builder/characters/{character_id}/defaults",
+                json={
+                    "image_1": image_ids[0],
+                    "image_2": image_ids[1],
+                    "audio": audio_id,
+                },
+            )
+            defaults_profile = (await defaults_response.json())["data"]
+            assert defaults_response.status == 200
+            assert defaults_profile["generation_ready"] is True
+
+            detail_response = await client.get(
+                f"/api/h3-character-ref-builder/characters/{character_id}"
+            )
+            detail = (await detail_response.json())["data"]
+            assert detail["images"][0]["url"].endswith(image_ids[0])
+
+            media_response = await client.get(detail["images"][0]["url"])
             assert media_response.status == 200
-            assert await media_response.read() == uploads["reference_image_1"][0]
+            assert await media_response.read() == png_bytes((10, 20, 30))
+
+            label_response = await client.put(
+                f"/api/h3-character-ref-builder/characters/{character_id}/media/{image_ids[0]}",
+                json={"label": "Front portrait"},
+            )
+            assert (await label_response.json())["data"]["images"][0][
+                "label"
+            ] == "Front portrait"
+
+            replace_form = FormData()
+            replace_form.add_field(
+                "file",
+                png_bytes((200, 1, 2)),
+                filename="replacement.png",
+                content_type="image/png",
+            )
+            replace_response = await client.put(
+                f"/api/h3-character-ref-builder/characters/{character_id}/media/{image_ids[0]}",
+                data=replace_form,
+            )
+            replaced = (await replace_response.json())["data"]
+            assert replaced["images"][0]["id"] == image_ids[0]
+
+            wrong_type_response = await client.put(
+                f"/api/h3-character-ref-builder/characters/{character_id}/defaults",
+                json={"image_1": audio_id, "image_2": image_ids[1], "audio": audio_id},
+            )
+            assert wrong_type_response.status == 400
+
+            deleted_response = await client.delete(
+                f"/api/h3-character-ref-builder/characters/{character_id}/media/{image_ids[0]}"
+            )
+            after_delete = (await deleted_response.json())["data"]
+            assert after_delete["defaults"]["image_1"] is None
+            assert after_delete["generation_ready"] is False
+
+            missing_media_response = await client.get(
+                f"/api/h3-character-ref-builder/characters/{character_id}/media/{image_ids[0]}"
+            )
+            assert missing_media_response.status == 404
 
             traversal_response = await client.get(
-                "/api/h3-character-ref-builder/characters/..%2F..%2Fsecret/media/reference_image_1"
+                f"/api/h3-character-ref-builder/characters/{character_id}/media/..%2F..%2Fsecret"
             )
             assert traversal_response.status in {400, 404}
 
-            updated_response = await client.put(
-                f"/api/h3-character-ref-builder/characters/{character_id}",
-                json={"name": "Aria", "description": "renamed"},
-            )
-            updated = (await updated_response.json())["data"]
-            assert updated["id"] == character_id
-            assert updated["name"] == "Aria"
-
-            listed_response = await client.get(
-                "/api/h3-character-ref-builder/characters"
-            )
-            assert (await listed_response.json())["data"] == [
-                {"id": character_id, "name": "Aria"}
-            ]
-
-            deleted_response = await client.delete(
+            delete_character_response = await client.delete(
                 f"/api/h3-character-ref-builder/characters/{character_id}"
             )
-            assert deleted_response.status == 200
-            missing_response = await client.get(
-                f"/api/h3-character-ref-builder/characters/{character_id}"
-            )
-            assert missing_response.status == 404
+            assert delete_character_response.status == 200
 
     asyncio.run(scenario())

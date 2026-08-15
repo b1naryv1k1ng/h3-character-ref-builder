@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import io
 from pathlib import Path
 from typing import Any
@@ -9,13 +10,16 @@ from typing import Any
 from .character_store import (
     DuplicateCharacterName,
     InvalidCharacterId,
+    InvalidMediaId,
     InvalidProfile,
+    MediaLimitReached,
+    MediaNotFound,
     MissingMedia,
     ProfileCorrupt,
     ProfileNotFound,
     get_default_store,
 )
-from .media import MEDIA_SLOTS, InvalidMedia
+from .media import InvalidMedia
 
 API_PREFIX = "/api/h3-character-ref-builder"
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -24,27 +28,35 @@ _ROUTES_REGISTERED = False
 
 
 def _profile_response(profile: dict[str, Any]) -> dict[str, Any]:
-    result = dict(profile)
+    result = copy.deepcopy(profile)
     character_id = profile["id"]
-    result["media_urls"] = {
-        slot: (
-            f"{API_PREFIX}/characters/{character_id}/media/{slot}"
-            if profile.get(slot)
-            else None
-        )
-        for slot in MEDIA_SLOTS
-    }
+    for collection in ("images", "audio"):
+        for record in result[collection]:
+            record["url"] = (
+                f"{API_PREFIX}/characters/{character_id}/media/{record['id']}"
+            )
+    defaults = result["defaults"]
+    result["generation_ready"] = bool(
+        defaults["image_1"] and defaults["image_2"] and defaults["audio"]
+    )
     return result
 
 
 def _error_status(error: Exception) -> int:
-    if isinstance(error, (ProfileNotFound, MissingMedia)):
+    if isinstance(error, (ProfileNotFound, MediaNotFound, MissingMedia)):
         return 404
-    if isinstance(error, DuplicateCharacterName):
+    if isinstance(error, (DuplicateCharacterName, MediaLimitReached)):
         return 409
     if isinstance(
         error,
-        (InvalidCharacterId, InvalidProfile, InvalidMedia, ProfileCorrupt, ValueError),
+        (
+            InvalidCharacterId,
+            InvalidMediaId,
+            InvalidProfile,
+            InvalidMedia,
+            ProfileCorrupt,
+            ValueError,
+        ),
     ):
         return 400
     return 500
@@ -66,6 +78,42 @@ async def _json_body(request) -> dict[str, Any]:
     return payload
 
 
+async def _multipart_body(
+    request,
+) -> tuple[dict[str, str], bytes | None, str | None, str | None]:
+    if not request.content_type.startswith("multipart/"):
+        raise InvalidMedia("Media uploads must use multipart/form-data.")
+    reader = await request.multipart()
+    fields: dict[str, str] = {}
+    filename = None
+    content_type = None
+    contents: bytearray | None = None
+    async for part in reader:
+        if part.name == "file" and part.filename:
+            if filename is not None:
+                raise InvalidMedia("Only one multipart 'file' field is allowed.")
+            filename = part.filename
+            content_type = part.headers.get("Content-Type")
+            contents = bytearray()
+            while True:
+                chunk = await part.read_chunk(size=1024 * 1024)
+                if not chunk:
+                    break
+                contents.extend(chunk)
+                if len(contents) > MAX_UPLOAD_BYTES:
+                    raise InvalidMedia("Uploaded media exceeds the 100 MiB limit.")
+        elif not part.filename and part.name:
+            if part.name in fields:
+                raise InvalidProfile(f"Duplicate multipart field: {part.name}.")
+            fields[part.name] = await part.text()
+    return (
+        fields,
+        bytes(contents) if contents is not None else None,
+        filename,
+        content_type,
+    )
+
+
 def register_routes() -> None:
     """Register once against the singleton PromptServer."""
     global _ROUTES_REGISTERED
@@ -80,7 +128,9 @@ def register_routes() -> None:
     async def list_characters(request):
         del request
         try:
-            return web.json_response({"ok": True, "data": get_default_store().list_profiles()})
+            return web.json_response(
+                {"ok": True, "data": get_default_store().list_profiles()}
+            )
         except Exception as error:
             return _error_json(web, error)
 
@@ -132,40 +182,92 @@ def register_routes() -> None:
         except Exception as error:
             return _error_json(web, error)
 
-    async def upload_media(request):
+    async def create_media(request):
         try:
-            if not request.content_type.startswith("multipart/"):
-                raise InvalidMedia("Media uploads must use multipart/form-data.")
-            reader = await request.multipart()
-            slot = None
-            filename = None
-            content_type = None
-            contents = bytearray()
-            async for part in reader:
-                if part.name == "slot" and not part.filename:
-                    slot = (await part.text()).strip()
-                elif part.name == "file" and part.filename:
-                    if filename is not None:
-                        raise InvalidMedia("Only one multipart 'file' field is allowed.")
-                    filename = part.filename
-                    content_type = part.headers.get("Content-Type")
-                    while True:
-                        chunk = await part.read_chunk(size=1024 * 1024)
-                        if not chunk:
-                            break
-                        contents.extend(chunk)
-                        if len(contents) > MAX_UPLOAD_BYTES:
-                            raise InvalidMedia("Uploaded media exceeds the 100 MiB limit.")
-            if slot not in MEDIA_SLOTS:
-                raise InvalidMedia(f"Invalid media slot: {slot!r}.")
-            if not filename:
+            fields, contents, filename, content_type = await _multipart_body(request)
+            unexpected = set(fields) - {"type", "label"}
+            if unexpected:
+                raise InvalidProfile(
+                    f"Unsupported media fields: {', '.join(sorted(unexpected))}."
+                )
+            if contents is None or not filename:
                 raise InvalidMedia("Multipart field 'file' is required.")
-            profile = get_default_store().replace_media(
+            profile = get_default_store().add_media(
                 request.match_info["id"],
-                slot,
+                fields.get("type", ""),
                 io.BytesIO(contents),
                 filename,
+                label=fields.get("label", ""),
                 content_type=content_type,
+            )
+            return web.json_response(
+                {"ok": True, "data": _profile_response(profile)}, status=201
+            )
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def update_media(request):
+        try:
+            label: str | object
+            contents = None
+            filename = None
+            content_type = None
+            if request.content_type.startswith("multipart/"):
+                fields, contents, filename, content_type = await _multipart_body(
+                    request
+                )
+                unexpected = set(fields) - {"label"}
+                if unexpected:
+                    raise InvalidProfile(
+                        f"Unsupported media fields: {', '.join(sorted(unexpected))}."
+                    )
+                label = fields.get("label", route_unset)
+            else:
+                payload = await _json_body(request)
+                if set(payload) != {"label"}:
+                    raise InvalidProfile(
+                        "A media JSON update must contain only 'label'."
+                    )
+                label = payload["label"]
+            if label is route_unset and contents is None:
+                raise InvalidProfile(
+                    "Media update must include a label or replacement file."
+                )
+            kwargs: dict[str, Any] = {
+                "source": io.BytesIO(contents) if contents is not None else None,
+                "original_filename": filename,
+                "content_type": content_type,
+            }
+            if label is not route_unset:
+                kwargs["label"] = label
+            profile = get_default_store().update_media(
+                request.match_info["id"], request.match_info["media_id"], **kwargs
+            )
+            return web.json_response({"ok": True, "data": _profile_response(profile)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def delete_media(request):
+        try:
+            profile = get_default_store().delete_media(
+                request.match_info["id"], request.match_info["media_id"]
+            )
+            return web.json_response({"ok": True, "data": _profile_response(profile)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def update_defaults(request):
+        try:
+            payload = await _json_body(request)
+            if set(payload) != {"image_1", "image_2", "audio"}:
+                raise InvalidProfile(
+                    "Defaults must contain exactly image_1, image_2, and audio."
+                )
+            profile = get_default_store().set_defaults(
+                request.match_info["id"],
+                image_1=payload["image_1"],
+                image_2=payload["image_2"],
+                audio=payload["audio"],
             )
             return web.json_response({"ok": True, "data": _profile_response(profile)})
         except Exception as error:
@@ -174,7 +276,7 @@ def register_routes() -> None:
     async def serve_media(request):
         try:
             path = get_default_store().media_path(
-                request.match_info["id"], request.match_info["slot"]
+                request.match_info["id"], request.match_info["media_id"]
             )
             response = web.FileResponse(path)
             response.headers["Cache-Control"] = "no-store"
@@ -201,13 +303,17 @@ def register_routes() -> None:
             raise web.HTTPNotFound()
         return web.FileResponse(path, headers={"Cache-Control": "no-store"})
 
+    route_unset = object()
     routes.get(f"{API_PREFIX}/characters")(list_characters)
     routes.get(f"{API_PREFIX}/characters/{{id}}")(get_character)
     routes.post(f"{API_PREFIX}/characters")(create_character)
     routes.put(f"{API_PREFIX}/characters/{{id}}")(update_character)
     routes.delete(f"{API_PREFIX}/characters/{{id}}")(delete_character)
-    routes.post(f"{API_PREFIX}/characters/{{id}}/media")(upload_media)
-    routes.get(f"{API_PREFIX}/characters/{{id}}/media/{{slot}}")(serve_media)
+    routes.post(f"{API_PREFIX}/characters/{{id}}/media")(create_media)
+    routes.put(f"{API_PREFIX}/characters/{{id}}/media/{{media_id}}")(update_media)
+    routes.delete(f"{API_PREFIX}/characters/{{id}}/media/{{media_id}}")(delete_media)
+    routes.get(f"{API_PREFIX}/characters/{{id}}/media/{{media_id}}")(serve_media)
+    routes.put(f"{API_PREFIX}/characters/{{id}}/defaults")(update_defaults)
     routes.get("/character-manager")(manager_page)
     routes.get("/character-manager/")(manager_page)
     routes.get("/character-manager/assets/{filename}")(manager_asset)
