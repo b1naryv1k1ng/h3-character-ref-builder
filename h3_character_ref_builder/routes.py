@@ -316,10 +316,12 @@ def register_routes() -> None:
     async def create_scene(request):
         try:
             payload = await _json_body(request)
-            if set(payload) - {"name", "definition"}:
+            if set(payload) - {"name", "definition", "default_soundscape"}:
                 raise InvalidScene("Unsupported scene fields.")
             scene = get_default_scene_store().create_scene(
-                payload.get("name", ""), payload.get("definition", "")
+                payload.get("name", ""),
+                payload.get("definition", ""),
+                payload.get("default_soundscape", ""),
             )
             return web.json_response({"ok": True, "data": scene}, status=201)
         except Exception as error:
@@ -328,12 +330,13 @@ def register_routes() -> None:
     async def update_scene(request):
         try:
             payload = await _json_body(request)
-            if set(payload) - {"name", "definition"}:
+            if set(payload) - {"name", "definition", "default_soundscape"}:
                 raise InvalidScene("Unsupported scene fields.")
             scene = get_default_scene_store().update_scene(
                 request.match_info["id"],
                 name=payload.get("name"),
                 definition=payload.get("definition"),
+                default_soundscape=payload.get("default_soundscape"),
             )
             return web.json_response({"ok": True, "data": scene})
         except Exception as error:

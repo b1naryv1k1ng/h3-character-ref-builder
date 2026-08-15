@@ -15,7 +15,8 @@ from typing import Any
 
 from .character_store import DATA_DIRECTORY
 
-SCENE_SCHEMA_VERSION = 1
+SCENE_SCHEMA_VERSION = 2
+LEGACY_SCENE_SCHEMA_VERSION = 1
 _SUBJECT_2_PREFIX = re.compile(r"^\s*<Subject\s+2>\s+is\s*", re.IGNORECASE)
 
 
@@ -64,6 +65,15 @@ def normalize_scene_definition(definition: Any) -> str:
     return body
 
 
+def normalize_default_soundscape(soundscape: Any) -> str:
+    if not isinstance(soundscape, str):
+        raise InvalidScene("Default soundscape must be a string.")
+    body = soundscape.strip()
+    if len(body) > 50_000:
+        raise InvalidScene("Default soundscape must be 50,000 characters or fewer.")
+    return body
+
+
 class SceneStore:
     """Manage independent UUID-addressed scene presets beneath one trusted root."""
 
@@ -84,7 +94,9 @@ class SceneStore:
         return self._scene_dir(scene_id) / "scene.json"
 
     @staticmethod
-    def _validate_text(name: Any, definition: Any) -> tuple[str, str]:
+    def _validate_text(
+        name: Any, definition: Any, default_soundscape: Any
+    ) -> tuple[str, str, str]:
         if not isinstance(name, str):
             raise InvalidScene("Scene name must be a string.")
         clean_name = name.strip()
@@ -92,7 +104,11 @@ class SceneStore:
             raise InvalidScene("Scene name is required.")
         if len(clean_name) > 200:
             raise InvalidScene("Scene name must be 200 characters or fewer.")
-        return clean_name, normalize_scene_definition(definition)
+        return (
+            clean_name,
+            normalize_scene_definition(definition),
+            normalize_default_soundscape(default_soundscape),
+        )
 
     @classmethod
     def _validate_scene_data(cls, data: Any, expected_id: str) -> dict[str, Any]:
@@ -101,12 +117,15 @@ class SceneStore:
             "id",
             "name",
             "definition",
+            "default_soundscape",
         }:
             raise SceneCorrupt(f"Scene preset {expected_id} has invalid fields.")
         if data["schema_version"] != SCENE_SCHEMA_VERSION or data["id"] != expected_id:
             raise SceneCorrupt(f"Scene preset {expected_id} has invalid identity data.")
         try:
-            name, definition = cls._validate_text(data["name"], data["definition"])
+            name, definition, default_soundscape = cls._validate_text(
+                data["name"], data["definition"], data["default_soundscape"]
+            )
         except InvalidScene as exc:
             raise SceneCorrupt(f"Scene preset {expected_id} is invalid: {exc}") from exc
         return {
@@ -114,6 +133,7 @@ class SceneStore:
             "id": expected_id,
             "name": name,
             "definition": definition,
+            "default_soundscape": default_soundscape,
         }
 
     @staticmethod
@@ -136,6 +156,30 @@ class SceneStore:
                 pass
             raise
 
+    def _migrate_v1(self, scene_id: str, data: Any) -> dict[str, Any]:
+        if not isinstance(data, dict) or set(data) != {
+            "schema_version",
+            "id",
+            "name",
+            "definition",
+        }:
+            raise SceneCorrupt(f"Scene preset {scene_id} has invalid V1 fields.")
+        if (
+            data["schema_version"] != LEGACY_SCENE_SCHEMA_VERSION
+            or data["id"] != scene_id
+        ):
+            raise SceneCorrupt(f"Scene preset {scene_id} has invalid V1 identity data.")
+        migrated = {
+            "schema_version": SCENE_SCHEMA_VERSION,
+            "id": scene_id,
+            "name": data["name"],
+            "definition": data["definition"],
+            "default_soundscape": "",
+        }
+        migrated = self._validate_scene_data(migrated, scene_id)
+        self._atomic_write(self._scene_path(scene_id), migrated)
+        return migrated
+
     def _read_unlocked(self, scene_id: str) -> dict[str, Any]:
         canonical = validate_scene_id(scene_id)
         path = self._scene_path(canonical)
@@ -146,6 +190,11 @@ class SceneStore:
                 data = json.load(handle)
         except (OSError, json.JSONDecodeError) as exc:
             raise SceneCorrupt(f"Scene preset {canonical} is malformed.") from exc
+        if (
+            isinstance(data, dict)
+            and data.get("schema_version") == LEGACY_SCENE_SCHEMA_VERSION
+        ):
+            data = self._migrate_v1(canonical, data)
         return self._validate_scene_data(data, canonical)
 
     def _assert_unique_name(self, name: str, exclude_id: str | None = None) -> None:
@@ -156,8 +205,15 @@ class SceneStore:
                     f'A scene preset named "{name}" already exists (names are case-insensitive).'
                 )
 
-    def create_scene(self, name: str, definition: str = "") -> dict[str, Any]:
-        clean_name, clean_definition = self._validate_text(name, definition)
+    def create_scene(
+        self,
+        name: str,
+        definition: str = "",
+        default_soundscape: str = "",
+    ) -> dict[str, Any]:
+        clean_name, clean_definition, clean_soundscape = self._validate_text(
+            name, definition, default_soundscape
+        )
         with self._lock:
             self._assert_unique_name(clean_name)
             scene_id = str(uuid.uuid4())
@@ -168,6 +224,7 @@ class SceneStore:
                 "id": scene_id,
                 "name": clean_name,
                 "definition": clean_definition,
+                "default_soundscape": clean_soundscape,
             }
             try:
                 self._atomic_write(directory / "scene.json", scene)
@@ -199,17 +256,22 @@ class SceneStore:
         *,
         name: str | None = None,
         definition: str | None = None,
+        default_soundscape: str | None = None,
     ) -> dict[str, Any]:
         canonical = validate_scene_id(scene_id)
         with self._lock:
             scene = self._read_unlocked(canonical)
-            clean_name, clean_definition = self._validate_text(
+            clean_name, clean_definition, clean_soundscape = self._validate_text(
                 scene["name"] if name is None else name,
                 scene["definition"] if definition is None else definition,
+                scene["default_soundscape"]
+                if default_soundscape is None
+                else default_soundscape,
             )
             self._assert_unique_name(clean_name, exclude_id=canonical)
             scene["name"] = clean_name
             scene["definition"] = clean_definition
+            scene["default_soundscape"] = clean_soundscape
             self._atomic_write(self._scene_path(canonical), scene)
             return copy.deepcopy(scene)
 
@@ -224,7 +286,7 @@ class SceneStore:
     def prompt_fingerprint(self, scene_id: str) -> str:
         """Return prompt-relevant scene state, deliberately excluding its name."""
         scene = self.get_scene(scene_id)
-        return f"{scene['id']}\0{scene['definition']}"
+        return f"{scene['id']}\0{scene['definition']}\0{scene['default_soundscape']}"
 
 
 _DEFAULT_STORES: dict[Path, SceneStore] = {}

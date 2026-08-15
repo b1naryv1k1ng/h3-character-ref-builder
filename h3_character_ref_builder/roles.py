@@ -10,8 +10,8 @@ IMAGE_ROLE_METADATA = {
         "definition": "facial identity, facial structure, eyes, hair, and recognizable facial detail",
     },
     "full_body_identity": {
-        "label": "Full Body / Wardrobe",
-        "definition": "full-body appearance, body proportions, wardrobe, colors, and distinctive details",
+        "label": "Full Body / Physical Identity",
+        "definition": "full-body identity, body proportions, build, silhouette, skin tone, and distinctive physical details",
     },
     "alternate_identity": {
         "label": "Alternate Identity Angle",

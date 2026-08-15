@@ -19,6 +19,21 @@ function labelForScene(value) {
   return scenesById.get(String(value)) || `Missing scene (${value})`;
 }
 
+const WIDGET_LABELS = Object.freeze({
+  character: "Character",
+  scene: "Scene Preset",
+  detailed_description: "Video / Action Description",
+  overall_soundscape: "Additional Soundscape",
+  non_diegetic_music: "Non-Diegetic Music",
+});
+
+function applyWidgetLabels(node) {
+  for (const [name, label] of Object.entries(WIDGET_LABELS)) {
+    const widget = findWidget(node, name);
+    if (widget) widget.label = label;
+  }
+}
+
 function findWidget(node, name) {
   return node.widgets?.find((widget) => widget.name === name);
 }
@@ -40,6 +55,7 @@ function applyOptions(node, widgetName, items, fallback, labeler, chooseFirst) {
 }
 
 function applyCatalogs(node, catalogs) {
+  applyWidgetLabels(node);
   applyOptions(node, "character", catalogs.characters, "", labelForCharacter, true);
   applyOptions(node, "scene", catalogs.scenes, NO_SCENE, labelForScene, false);
 }
@@ -120,6 +136,7 @@ app.registerExtension({
     const originalCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function (...args) {
       const result = originalCreated?.apply(this, args);
+      applyWidgetLabels(this);
       void refreshNode(this);
       return result;
     };

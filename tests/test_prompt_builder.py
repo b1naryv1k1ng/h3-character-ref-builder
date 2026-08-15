@@ -50,7 +50,10 @@ def test_prompt_has_exact_six_sections_in_order_and_common_role_wording():
     assert re.findall(r"(?m)^([a-z_]+):$", prompt) == SECTION_NAMES
     definitions = section(prompt, "subject_definitions")
     assert "facial identity, facial structure, eyes, hair" in definitions
-    assert "full-body appearance, body proportions, wardrobe" in definitions
+    assert (
+        "full-body identity, body proportions, build, silhouette, skin tone" in definitions
+    )
+    assert "or wardrobe unless explicitly requested" in definitions
     assert "same character" in definitions
     assert "do not blend the references into different people" in definitions
     assert "a small scar above the left eyebrow" in definitions

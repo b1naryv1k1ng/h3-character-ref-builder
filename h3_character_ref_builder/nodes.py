@@ -11,7 +11,7 @@ from .character_store import (
     validate_character_id,
 )
 from .media import load_audio, load_image
-from .prompt_builder import DEFAULT_MUSIC, DEFAULT_SOUNDSCAPE, build_ref2va_prompt
+from .prompt_builder import DEFAULT_MUSIC, build_ref2va_prompt
 from .scene_store import InvalidSceneId, get_default_scene_store, validate_scene_id
 
 NO_SCENE = "__h3_no_scene_preset__"
@@ -32,6 +32,7 @@ class H3CharacterReference:
                     character_ids,
                     {
                         "default": character_ids[0],
+                        "label": "Character",
                         "tooltip": "Character profile managed by H3 Reference Manager.",
                     },
                 ),
@@ -43,6 +44,7 @@ class H3CharacterReference:
                     scene_ids,
                     {
                         "default": NO_SCENE,
+                        "label": "Scene Preset",
                         "tooltip": "Optional reusable Scene Preset.",
                     },
                 ),
@@ -50,23 +52,27 @@ class H3CharacterReference:
                     "STRING",
                     {
                         "default": "",
+                        "label": "Video / Action Description",
                         "multiline": True,
                         "dynamicPrompts": False,
-                        "tooltip": "Video / Action Description used verbatim in detailed_description.",
+                        "tooltip": "Used verbatim in the H3 detailed_description section.",
                     },
                 ),
                 "overall_soundscape": (
                     "STRING",
                     {
-                        "default": DEFAULT_SOUNDSCAPE,
+                        "default": "",
+                        "label": "Additional Soundscape",
                         "multiline": True,
                         "dynamicPrompts": False,
+                        "tooltip": "Optional action-specific sounds added to the Scene Preset ambience.",
                     },
                 ),
                 "non_diegetic_music": (
                     "STRING",
                     {
                         "default": DEFAULT_MUSIC,
+                        "label": "Non-Diegetic Music",
                         "multiline": True,
                         "dynamicPrompts": False,
                     },
@@ -86,7 +92,7 @@ class H3CharacterReference:
         character,
         scene=NO_SCENE,
         detailed_description="",
-        overall_soundscape=DEFAULT_SOUNDSCAPE,
+        overall_soundscape="",
         non_diegetic_music=DEFAULT_MUSIC,
     ):
         del detailed_description, overall_soundscape, non_diegetic_music
@@ -106,7 +112,7 @@ class H3CharacterReference:
         character,
         scene=NO_SCENE,
         detailed_description="",
-        overall_soundscape=DEFAULT_SOUNDSCAPE,
+        overall_soundscape="",
         non_diegetic_music=DEFAULT_MUSIC,
     ):
         if not character:
@@ -131,7 +137,7 @@ class H3CharacterReference:
         character,
         scene=NO_SCENE,
         detailed_description="",
-        overall_soundscape=DEFAULT_SOUNDSCAPE,
+        overall_soundscape="",
         non_diegetic_music=DEFAULT_MUSIC,
     ):
         if not character:

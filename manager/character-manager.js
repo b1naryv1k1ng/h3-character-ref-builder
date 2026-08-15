@@ -6,7 +6,7 @@ const IMAGE_LIMIT = 9;
 const AUDIO_LIMIT = 3;
 const IMAGE_ROLES = [
   ["face_identity", "Face / Identity"],
-  ["full_body_identity", "Full Body / Wardrobe"],
+  ["full_body_identity", "Full Body / Physical Identity"],
   ["alternate_identity", "Alternate Identity Angle"],
   ["wardrobe", "Wardrobe / Clothing"],
   ["pose_orientation", "Pose / Orientation"],
@@ -26,7 +26,7 @@ const elements = Object.fromEntries([
   "character-description", "readiness", "image-library", "audio-library", "image-count",
   "audio-count", "images-empty", "audio-empty", "image-limit-note", "audio-limit-note",
   "add-image", "add-audio", "media-file", "delete-character", "character-dirty",
-  "scene-form", "scene-title", "scene-id", "scene-name", "scene-definition", "delete-scene",
+  "scene-form", "scene-title", "scene-id", "scene-name", "scene-definition", "scene-default-soundscape", "delete-scene",
   "scene-dirty", "confirm-dialog", "confirm-title", "confirm-message",
 ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]));
 
@@ -227,7 +227,7 @@ function showCharacter(profile) {
 function showScene(scene) {
   state.scene = clone(scene); state.sceneOriginal = clone(scene); state.character = null; state.characterOriginal = null;
   elements.editor_empty.hidden = true; elements.character_form.hidden = true; elements.scene_form.hidden = false;
-  elements.scene_name.value = scene.name || ""; elements.scene_definition.value = scene.definition || "";
+  elements.scene_name.value = scene.name || ""; elements.scene_definition.value = scene.definition || ""; elements.scene_default_soundscape.value = scene.default_soundscape || "";
   elements.scene_title.textContent = scene.id ? scene.name : "New Scene Preset";
   elements.scene_id.textContent = scene.id ? `UUID ${scene.id}` : "UUID assigned on save";
   elements.delete_scene.hidden = !scene.id; setDirty(false); renderList(); updateControls(); elements.scene_name.focus();
@@ -262,7 +262,7 @@ async function switchTab(tab) {
 async function newItem() {
   if (state.busy || !(await mayDiscard())) return; showStatus("");
   if (state.tab === "characters") showCharacter({ schema_version: 3, id: null, name: "", description: "", images: [], audio: [], defaults: { image_1: null, image_2: null, audio: null }, generation_ready: false });
-  else showScene({ schema_version: 1, id: null, name: "", definition: "" });
+  else showScene({ schema_version: 2, id: null, name: "", definition: "", default_soundscape: "" });
 }
 
 function validateUniqueName(value, catalog, currentId, label) {
@@ -301,7 +301,7 @@ async function saveScene(event) {
   try {
     setBusy(true); showStatus("Saving Scene Preset…");
     const name = validateUniqueName(elements.scene_name.value, state.scenes, state.scene?.id, "Scene Preset");
-    const body = JSON.stringify({ name, definition: elements.scene_definition.value });
+    const body = JSON.stringify({ name, definition: elements.scene_definition.value, default_soundscape: elements.scene_default_soundscape.value });
     const scene = await request(state.scene.id ? `/scenes/${encodeURIComponent(state.scene.id)}` : "/scenes", { method: state.scene.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body });
     showScene(scene); await refreshCatalogs(); showStatus(`Saved ${scene.name}.`, "success");
   } catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
@@ -384,8 +384,8 @@ async function deleteCurrent() {
 for (const input of [elements.character_name, elements.character_description]) input.addEventListener("input", () => {
   if (state.character) { state.character.name = elements.character_name.value; state.character.description = elements.character_description.value; elements.character_title.textContent = elements.character_name.value.trim() || "New Character"; setDirty(); }
 });
-for (const input of [elements.scene_name, elements.scene_definition]) input.addEventListener("input", () => {
-  if (state.scene) { state.scene.name = elements.scene_name.value; state.scene.definition = elements.scene_definition.value; elements.scene_title.textContent = elements.scene_name.value.trim() || "New Scene Preset"; setDirty(); }
+for (const input of [elements.scene_name, elements.scene_definition, elements.scene_default_soundscape]) input.addEventListener("input", () => {
+  if (state.scene) { state.scene.name = elements.scene_name.value; state.scene.definition = elements.scene_definition.value; state.scene.default_soundscape = elements.scene_default_soundscape.value; elements.scene_title.textContent = elements.scene_name.value.trim() || "New Scene Preset"; setDirty(); }
 });
 elements.characters_tab.addEventListener("click", () => switchTab("characters")); elements.scenes_tab.addEventListener("click", () => switchTab("scenes"));
 elements.new_item.addEventListener("click", newItem); elements.character_form.addEventListener("submit", saveCharacter); elements.scene_form.addEventListener("submit", saveScene);

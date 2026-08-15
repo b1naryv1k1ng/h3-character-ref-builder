@@ -48,6 +48,14 @@ def _audio_definition(role: str) -> str:
     )
 
 
+def _soundscape(scene: dict[str, Any] | None, additional: str) -> str:
+    scene_default = (
+        str(scene.get("default_soundscape", "")).strip() if scene is not None else ""
+    )
+    parts = [part for part in (scene_default, additional.strip()) if part]
+    return " ".join(parts) if parts else DEFAULT_SOUNDSCAPE
+
+
 def build_ref2va_prompt(
     *,
     character: dict[str, Any],
@@ -70,9 +78,9 @@ def build_ref2va_prompt(
         f"{_picture_definition(1, image_1_role)} "
         f"{_picture_definition(2, image_2_role)} "
         "Preserve one coherent identity throughout; do not blend the references into "
-        "different people. The reference images define identity and appearance only; "
-        "do not retain their source backgrounds, lighting, camera framing, pose, or "
-        "expression unless explicitly requested."
+        "different people. The reference images define identity and physical appearance "
+        "only; do not retain their source backgrounds, lighting, camera framing, pose, "
+        "expression, or wardrobe unless explicitly requested."
     )
     identity_details = str(character.get("description", "")).strip()
     if identity_details:
@@ -112,7 +120,7 @@ def build_ref2va_prompt(
     action = detailed_description.strip()
     if not action.startswith("[Shot 1]"):
         action = f"[Shot 1] {action}".rstrip()
-    soundscape = overall_soundscape.strip() or DEFAULT_SOUNDSCAPE
+    soundscape = _soundscape(scene, overall_soundscape)
     music = non_diegetic_music.strip() or DEFAULT_MUSIC
 
     sections = [
