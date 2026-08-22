@@ -1,9 +1,11 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { ComfyButton } from "../../scripts/ui/components/button.js";
 
 const NODE_TYPE = "H3CharacterReference";
 const API_PREFIX = "/api/h3-character-ref-builder";
 const NO_SCENE = "__h3_no_scene_preset__";
+const TOPBAR_BUTTON_ID = "h3-character-manager-topbar-button";
 
 let charactersById = new Map();
 let scenesById = new Map();
@@ -112,7 +114,31 @@ function openManager() {
         location.pathname.replace(/\/$/, "") + "/character-manager",
         location.origin,
       ).href;
-  window.open(url, "_blank", "noopener");
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function registerManagerTopbarButton() {
+  const buttonGroup = app.menu?.settingsGroup;
+  if (!buttonGroup?.append) {
+    console.warn(
+      "[H3 Character Ref Builder] ComfyUI top-bar button API is unavailable.",
+    );
+    return;
+  }
+
+  const isRegistered = buttonGroup.buttons?.some((item) => {
+    const element = item?.element ?? item;
+    return element?.id === TOPBAR_BUTTON_ID;
+  });
+  if (isRegistered || document.getElementById(TOPBAR_BUTTON_ID)) return;
+
+  const button = new ComfyButton({
+    icon: "account-multiple",
+    tooltip: "Character Manager",
+    action: openManager,
+  });
+  button.element.id = TOPBAR_BUTTON_ID;
+  buttonGroup.append(button);
 }
 
 app.registerExtension({
@@ -148,6 +174,7 @@ app.registerExtension({
     };
   },
   async setup() {
+    registerManagerTopbarButton();
     window.addEventListener("focus", refreshAllNodes);
     await refreshAllNodes();
   },
