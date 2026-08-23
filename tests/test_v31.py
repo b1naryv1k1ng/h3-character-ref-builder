@@ -8,7 +8,7 @@ from pathlib import Path
 from aiohttp.test_utils import TestClient, TestServer
 
 from h3_character_ref_builder import nodes as node_module
-from h3_character_ref_builder.nodes import H3CharacterReference
+from h3_character_ref_builder.nodes import H3CharacterReference, H3PromptEnhancer
 from h3_character_ref_builder.prompt_builder import DEFAULT_SOUNDSCAPE
 from h3_character_ref_builder.roles import IMAGE_ROLE_METADATA
 from h3_character_ref_builder.scene_store import SCENE_SCHEMA_VERSION, SceneStore
@@ -140,7 +140,10 @@ def test_soundscape_combines_scene_default_and_additional_without_rewriting():
         scene={"definition": "a beach", "default_soundscape": scene_default},
         overall_soundscape=additional,
     )
-    assert section(prompt, "overall_soundscape") == f"{scene_default} {additional}"
+    assert section(prompt, "overall_soundscape") == (
+        f"{scene_default}\n\n"
+        f"Additional action-specific sounds: {additional}"
+    )
 
 
 def test_soundscape_uses_scene_default_only():
@@ -192,7 +195,7 @@ def test_selected_scene_soundscape_alone_participates_in_fingerprint(
     assert H3CharacterReference.IS_CHANGED(profile["id"], selected["id"]) != before
 
 
-def test_node_multiline_inputs_have_permanent_labels_and_empty_additional_default(
+def test_character_node_removes_authoring_widgets_and_enhancer_owns_them(
     store, tmp_path, monkeypatch
 ):
     complete_profile(store)
@@ -200,22 +203,24 @@ def test_node_multiline_inputs_have_permanent_labels_and_empty_additional_defaul
     monkeypatch.setattr(node_module, "get_default_store", lambda: store)
     monkeypatch.setattr(node_module, "get_default_scene_store", lambda: scenes)
 
-    optional = H3CharacterReference.INPUT_TYPES()["optional"]
+    assert set(H3CharacterReference.INPUT_TYPES()["optional"]) == {"scene"}
+    required = H3PromptEnhancer.INPUT_TYPES()["required"]
     expected = {
-        "detailed_description": "Video / Action Description",
-        "overall_soundscape": "Additional Soundscape",
+        "action_idea": "Action Idea",
+        "additional_notes": "Additional Notes",
         "non_diegetic_music": "Non-Diegetic Music",
     }
     for key, label in expected.items():
-        input_type, options = optional[key]
+        input_type, options = required[key]
         assert input_type == "STRING"
         assert options["multiline"] is True
         assert options["label"] == label
-    assert optional["overall_soundscape"][1]["default"] == ""
+    assert required["additional_notes"][1]["default"] == ""
+    assert required["non_diegetic_music"][1]["default"] == "N/A"
 
     extension = (
         Path(__file__).parents[1] / "web" / "character_reference.js"
     ).read_text(encoding="utf-8")
     assert "widget.label = label" in extension
-    for label in expected.values():
-        assert f'"{label}"' in extension
+    assert "detailed_description:" not in extension
+    assert "overall_soundscape:" not in extension

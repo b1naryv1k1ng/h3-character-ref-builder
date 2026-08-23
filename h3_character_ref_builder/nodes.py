@@ -1,9 +1,10 @@
-"""ComfyUI node implementation."""
+"""ComfyUI node implementations."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 
 from .character_store import (
     InvalidCharacterId,
@@ -11,7 +12,18 @@ from .character_store import (
     validate_character_id,
 )
 from .media import load_audio, load_image
-from .prompt_builder import DEFAULT_MUSIC, build_ref2va_prompt
+from .prompt_builder import (
+    DEFAULT_MUSIC,
+    assemble_ref2va_prompt,
+    build_character_context,
+    parse_character_context,
+)
+from .prompt_enhancer import (
+    MODEL_ENV,
+    PromptEnhancerError,
+    enhancer_execution_fingerprint,
+    get_enhancement,
+)
 from .scene_store import InvalidSceneId, get_default_scene_store, validate_scene_id
 
 NO_SCENE = "__h3_no_scene_preset__"
@@ -37,8 +49,6 @@ class H3CharacterReference:
                     },
                 ),
             },
-            # Optional inputs preserve execution compatibility with workflows saved
-            # before V3 while still rendering normal widgets for new nodes.
             "optional": {
                 "scene": (
                     scene_ids,
@@ -48,54 +58,18 @@ class H3CharacterReference:
                         "tooltip": "Optional reusable Scene Preset.",
                     },
                 ),
-                "detailed_description": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "label": "Video / Action Description",
-                        "multiline": True,
-                        "dynamicPrompts": False,
-                        "tooltip": "Used verbatim in the H3 detailed_description section.",
-                    },
-                ),
-                "overall_soundscape": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "label": "Additional Soundscape",
-                        "multiline": True,
-                        "dynamicPrompts": False,
-                        "tooltip": "Optional action-specific sounds added to the Scene Preset ambience.",
-                    },
-                ),
-                "non_diegetic_music": (
-                    "STRING",
-                    {
-                        "default": DEFAULT_MUSIC,
-                        "label": "Non-Diegetic Music",
-                        "multiline": True,
-                        "dynamicPrompts": False,
-                    },
-                ),
             },
         }
 
     RETURN_TYPES = ("IMAGE", "IMAGE", "AUDIO", "STRING")
-    RETURN_NAMES = ("image_1", "image_2", "audio", "prompt")
+    RETURN_NAMES = ("image_1", "image_2", "audio", "character_context")
     FUNCTION = "load_character"
     CATEGORY = "H3/Reference"
-    DESCRIPTION = "Loads active character references and builds an H3 Ref2VA prompt."
+    DESCRIPTION = "Loads active references and builds deterministic H3 character context."
 
     @classmethod
-    def VALIDATE_INPUTS(
-        cls,
-        character,
-        scene=NO_SCENE,
-        detailed_description="",
-        overall_soundscape="",
-        non_diegetic_music=DEFAULT_MUSIC,
-    ):
-        del detailed_description, overall_soundscape, non_diegetic_music
+    def VALIDATE_INPUTS(cls, character, scene=NO_SCENE, *legacy_values, **legacy_inputs):
+        del legacy_values, legacy_inputs
         if not character:
             return "No character selected. Create a profile in H3 Reference Manager."
         try:
@@ -107,14 +81,8 @@ class H3CharacterReference:
         return True
 
     @classmethod
-    def IS_CHANGED(
-        cls,
-        character,
-        scene=NO_SCENE,
-        detailed_description="",
-        overall_soundscape="",
-        non_diegetic_music=DEFAULT_MUSIC,
-    ):
+    def IS_CHANGED(cls, character, scene=NO_SCENE, *legacy_values, **legacy_inputs):
+        del legacy_values, legacy_inputs
         if not character:
             return "no-character-selected"
         scene_fingerprint = "no-scene"
@@ -124,22 +92,13 @@ class H3CharacterReference:
             "character": get_default_store().fingerprint(character),
             "scene_selection": scene,
             "scene": scene_fingerprint,
-            "detailed_description": detailed_description,
-            "overall_soundscape": overall_soundscape,
-            "non_diegetic_music": non_diegetic_music,
         }
         return hashlib.sha256(
             json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
-    def load_character(
-        self,
-        character,
-        scene=NO_SCENE,
-        detailed_description="",
-        overall_soundscape="",
-        non_diegetic_music=DEFAULT_MUSIC,
-    ):
+    def load_character(self, character, scene=NO_SCENE, *legacy_values, **legacy_inputs):
+        del legacy_values, legacy_inputs
         if not character:
             raise ValueError(
                 "No character selected. Create a profile in H3 Reference Manager."
@@ -148,19 +107,152 @@ class H3CharacterReference:
         scene_data = None
         if scene != NO_SCENE:
             scene_data = get_default_scene_store().get_scene(scene)
-        prompt = build_ref2va_prompt(
+        character_context = build_character_context(
             character=selected["profile"],
             image_1=selected["records"]["image_1"],
             image_2=selected["records"]["image_2"],
             audio=selected["records"]["audio"],
             scene=scene_data,
-            detailed_description=detailed_description,
-            overall_soundscape=overall_soundscape,
-            non_diegetic_music=non_diegetic_music,
         )
         return (
             load_image(selected["paths"]["image_1"]),
             load_image(selected["paths"]["image_2"]),
             load_audio(selected["paths"]["audio"]),
+            character_context,
+        )
+
+
+class H3PromptEnhancer:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "character_context": (
+                    "STRING",
+                    {
+                        "forceInput": True,
+                        "tooltip": "Connect character_context from H3 Character Reference.",
+                    },
+                ),
+                "duration_seconds": (
+                    "INT",
+                    {"default": 15, "min": 1, "max": 60, "step": 1},
+                ),
+                "action_idea": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                        "label": "Action Idea",
+                    },
+                ),
+                "additional_notes": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                        "label": "Additional Notes",
+                    },
+                ),
+                "non_diegetic_music": (
+                    "STRING",
+                    {
+                        "default": DEFAULT_MUSIC,
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                        "label": "Non-Diegetic Music",
+                    },
+                ),
+                "model": (
+                    "STRING",
+                    {
+                        "default": os.getenv(MODEL_ENV, ""),
+                        "label": "Model",
+                        "tooltip": (
+                            "OpenAI-compatible model identifier; defaults to "
+                            f"{MODEL_ENV}."
+                        ),
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompt", "detailed_description", "additional_soundscape")
+    FUNCTION = "enhance_prompt"
+    CATEGORY = "H3/Prompt"
+    DESCRIPTION = "Enhances action choreography and assembles the final H3 prompt."
+
+    @classmethod
+    def VALIDATE_INPUTS(
+        cls,
+        character_context,
+        duration_seconds,
+        action_idea,
+        additional_notes="",
+        non_diegetic_music=DEFAULT_MUSIC,
+        model="",
+    ):
+        del additional_notes, non_diegetic_music, model
+        try:
+            parse_character_context(character_context)
+        except (TypeError, ValueError) as exc:
+            return str(exc)
+        if not 1 <= duration_seconds <= 60:
+            return "Duration must be between 1 and 60 seconds."
+        if not action_idea.strip():
+            return "Action Idea is required."
+        return True
+
+    @classmethod
+    def IS_CHANGED(
+        cls,
+        character_context,
+        duration_seconds,
+        action_idea,
+        additional_notes="",
+        non_diegetic_music=DEFAULT_MUSIC,
+        model="",
+    ):
+        return enhancer_execution_fingerprint(
+            character_context=character_context,
+            duration_seconds=duration_seconds,
+            action_idea=action_idea,
+            additional_notes=additional_notes,
+            non_diegetic_music=non_diegetic_music,
+            model=model,
+        )
+
+    def enhance_prompt(
+        self,
+        character_context,
+        duration_seconds,
+        action_idea,
+        additional_notes="",
+        non_diegetic_music=DEFAULT_MUSIC,
+        model="",
+    ):
+        try:
+            context = parse_character_context(character_context)
+            enhancement = get_enhancement(
+                character_context=context,
+                duration_seconds=duration_seconds,
+                action_idea=action_idea,
+                additional_notes=additional_notes,
+                model=model,
+            )
+        except (TypeError, ValueError, PromptEnhancerError) as exc:
+            raise RuntimeError(str(exc)) from exc
+        prompt = assemble_ref2va_prompt(
+            character_context=context,
+            detailed_description=enhancement["detailed_description"],
+            additional_soundscape=enhancement["additional_soundscape"],
+            non_diegetic_music=non_diegetic_music,
+        )
+        return (
             prompt,
+            enhancement["detailed_description"],
+            enhancement["additional_soundscape"],
         )

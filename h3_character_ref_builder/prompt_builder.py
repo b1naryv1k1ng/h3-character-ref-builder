@@ -1,11 +1,20 @@
-"""Deterministic MiniMax H3 Ref2VA prompt composition."""
+"""Deterministic MiniMax H3 Ref2VA context and prompt composition."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .roles import AUDIO_ROLE_METADATA, IMAGE_ROLE_METADATA, validate_role
 
+CHARACTER_CONTEXT_SCHEMA_VERSION = 1
+CHARACTER_CONTEXT_FIELDS = (
+    "subject_definitions",
+    "summary",
+    "retention_analysis",
+    "scene_definition",
+    "default_soundscape",
+)
 DEFAULT_SOUNDSCAPE = (
     "Natural diegetic ambience appropriate to the scene, with synchronized physical "
     "sounds caused by the visible action."
@@ -48,26 +57,15 @@ def _audio_definition(role: str) -> str:
     )
 
 
-def _soundscape(scene: dict[str, Any] | None, additional: str) -> str:
-    scene_default = (
-        str(scene.get("default_soundscape", "")).strip() if scene is not None else ""
-    )
-    parts = [part for part in (scene_default, additional.strip()) if part]
-    return " ".join(parts) if parts else DEFAULT_SOUNDSCAPE
-
-
-def build_ref2va_prompt(
+def build_character_context_data(
     *,
     character: dict[str, Any],
     image_1: dict[str, Any],
     image_2: dict[str, Any],
     audio: dict[str, Any],
     scene: dict[str, Any] | None,
-    detailed_description: str,
-    overall_soundscape: str,
-    non_diegetic_music: str,
-) -> str:
-    """Build the exact six-section Ref2VA prompt without rewriting user prose."""
+) -> dict[str, Any]:
+    """Build the deterministic, media-free context consumed by the enhancer."""
     image_1_role = validate_role("image", image_1.get("role"))
     image_2_role = validate_role("image", image_2.get("role"))
     audio_role = validate_role("audio", audio.get("role"))
@@ -116,19 +114,136 @@ def build_ref2va_prompt(
         f"<Audio 1>: reference - preserve {audio_retention} without copying the "
         "original signal or source dialogue."
     )
+    return {
+        "schema_version": CHARACTER_CONTEXT_SCHEMA_VERSION,
+        "subject_definitions": "\n\n".join(subject_lines),
+        "summary": summary,
+        "retention_analysis": "\n".join(retention_lines),
+        "scene_definition": (
+            str(scene.get("definition", "")).strip() if scene is not None else ""
+        ),
+        "default_soundscape": (
+            str(scene.get("default_soundscape", "")).strip()
+            if scene is not None
+            else ""
+        ),
+    }
 
+
+def serialize_character_context(context: dict[str, Any]) -> str:
+    """Serialize context as stable, human-inspectable JSON."""
+    return json.dumps(context, ensure_ascii=False, indent=2)
+
+
+def build_character_context(
+    *,
+    character: dict[str, Any],
+    image_1: dict[str, Any],
+    image_2: dict[str, Any],
+    audio: dict[str, Any],
+    scene: dict[str, Any] | None,
+) -> str:
+    return serialize_character_context(
+        build_character_context_data(
+            character=character,
+            image_1=image_1,
+            image_2=image_2,
+            audio=audio,
+            scene=scene,
+        )
+    )
+
+
+def parse_character_context(value: str) -> dict[str, Any]:
+    if not isinstance(value, str):
+        raise TypeError("character_context must be a JSON string.")
+    try:
+        context = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid character_context JSON.") from exc
+    if not isinstance(context, dict):
+        raise TypeError("character_context JSON must be an object.")
+    version = context.get("schema_version")
+    if type(version) is not int or version != CHARACTER_CONTEXT_SCHEMA_VERSION:
+        raise ValueError(
+            "Unsupported character_context schema_version: "
+            f"{version!r}; expected {CHARACTER_CONTEXT_SCHEMA_VERSION}."
+        )
+    for field in CHARACTER_CONTEXT_FIELDS:
+        if field not in context:
+            raise ValueError(f"character_context is missing required field {field!r}.")
+        if not isinstance(context[field], str):
+            raise TypeError(f"character_context field {field!r} must be a string.")
+    for field in ("subject_definitions", "summary", "retention_analysis"):
+        if not context[field].strip():
+            raise ValueError(f"character_context field {field!r} must not be empty.")
+    return {
+        "schema_version": version,
+        **{key: context[key] for key in CHARACTER_CONTEXT_FIELDS},
+    }
+
+
+def combine_soundscape(default_soundscape: str, additional_soundscape: str) -> str:
+    baseline = default_soundscape.strip()
+    additional = additional_soundscape.strip()
+    if baseline and additional:
+        return f"{baseline}\n\nAdditional action-specific sounds: {additional}"
+    if baseline:
+        return baseline
+    if additional:
+        return additional
+    return DEFAULT_SOUNDSCAPE
+
+
+def assemble_ref2va_prompt(
+    *,
+    character_context: dict[str, Any],
+    detailed_description: str,
+    additional_soundscape: str,
+    non_diegetic_music: str,
+) -> str:
+    """Assemble the exact six-section prompt without rewriting deterministic fields."""
+    context = parse_character_context(serialize_character_context(character_context))
     action = detailed_description.strip()
     if not action.startswith("[Shot 1]"):
         action = f"[Shot 1] {action}".rstrip()
-    soundscape = _soundscape(scene, overall_soundscape)
     music = non_diegetic_music.strip() or DEFAULT_MUSIC
-
+    soundscape = combine_soundscape(
+        context["default_soundscape"], additional_soundscape
+    )
     sections = [
-        "subject_definitions:\n" + "\n\n".join(subject_lines),
-        "summary:\n" + summary,
-        "retention_analysis:\n" + "\n".join(retention_lines),
+        "subject_definitions:\n" + context["subject_definitions"],
+        "summary:\n" + context["summary"],
+        "retention_analysis:\n" + context["retention_analysis"],
         "detailed_description:\n" + action,
         "overall_soundscape:\n" + soundscape,
         "non_diegetic_music:\n" + music,
     ]
     return "\n\n".join(sections)
+
+
+def build_ref2va_prompt(
+    *,
+    character: dict[str, Any],
+    image_1: dict[str, Any],
+    image_2: dict[str, Any],
+    audio: dict[str, Any],
+    scene: dict[str, Any] | None,
+    detailed_description: str,
+    overall_soundscape: str,
+    non_diegetic_music: str,
+) -> str:
+    """Backward-compatible deterministic builder used by tests and integrations."""
+    context = build_character_context_data(
+        character=character,
+        image_1=image_1,
+        image_2=image_2,
+        audio=audio,
+        scene=scene,
+    )
+    return assemble_ref2va_prompt(
+        character_context=context,
+        detailed_description=detailed_description,
+        additional_soundscape=overall_soundscape,
+        non_diegetic_music=non_diegetic_music,
+    )

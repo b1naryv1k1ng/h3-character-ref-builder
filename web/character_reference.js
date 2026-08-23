@@ -24,9 +24,6 @@ function labelForScene(value) {
 const WIDGET_LABELS = Object.freeze({
   character: "Character",
   scene: "Scene Preset",
-  detailed_description: "Video / Action Description",
-  overall_soundscape: "Additional Soundscape",
-  non_diegetic_music: "Non-Diegetic Music",
 });
 
 function applyWidgetLabels(node) {

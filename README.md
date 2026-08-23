@@ -1,23 +1,32 @@
 # H3 Character Ref Builder
 
-H3 Character Ref Builder is a ComfyUI custom node for organizing reusable character references, reusable Scene Presets, and deterministic MiniMax H3 Ref2VA prompts.
+H3 Character Ref Builder is a ComfyUI custom-node pack for reusable character
+references, Scene Presets, deterministic H3 context construction, and optional
+OpenAI-compatible action enhancement.
 
-Pick a character, pick an optional environment, describe what happens, and the node emits the active two images, active audio reference, and a complete six-section H3 prompt.
+The workflow is split between two nodes:
 
-V3.1 performs deterministic text assembly only. It does not use an LLM, VLM, external AI API, prompt rewriting, image analysis, automatic reference selection, scene generation, or video references.
+1. **H3 Character Reference** loads the selected media and emits deterministic,
+   versioned `character_context` JSON.
+2. **H3 Prompt Enhancer** asks an OpenAI-compatible model only for action choreography
+   and action-specific sounds, then assembles the final six-section H3 Ref2VA prompt.
+
+The Character Manager, UUID-addressed media library, reference roles, and Scene Preset
+storage remain local and deterministic.
 
 ## Features
 
-- One browser-based **H3 Reference Manager** at `/character-manager`
-- **Characters** and **Scene Presets** tabs in the existing dark manager UI
+- Browser-based **H3 Reference Manager** at `/character-manager`
+- Compact Character Manager button in the ComfyUI top bar
 - Up to 9 labeled image references and 3 labeled audio references per character
 - Immutable character, media, and scene UUIDs
 - Two active image defaults and one active audio default per generation
-- A semantic role on every reference for deterministic prompt construction
-- Image previews, audio playback, replacement, deletion, and drag/drop upload
-- Independent reusable environment definitions and default soundscapes selected as `<Subject 2>`
-- Compact ComfyUI node with `image_1`, `image_2`, `audio`, and `prompt` outputs
-- Selected-output/prompt cache invalidation isolated from unused references and unrelated scenes
+- Semantic image/audio roles for deterministic subject and retention text
+- Independent Scene Presets with definitions and baseline soundscapes
+- Human-inspectable, versioned `character_context` JSON with no media paths or bytes
+- Provider-agnostic OpenAI-compatible chat-completions client
+- Strict structured-output request with a JSON-only compatibility fallback
+- Bounded in-process enhancement cache that avoids unnecessary paid API calls
 - Automatic safe migration from V1/V2 character profiles and V1 Scene Presets
 
 ## Installation
@@ -29,87 +38,134 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/b1naryv1k1ng/h3-character-ref-builder.git
 ```
 
-Restart ComfyUI after cloning or updating. The project adds no Python runtime dependencies; it uses Pillow, PyTorch, and PyAV from a normal current ComfyUI installation.
+Restart ComfyUI after cloning or updating. No OpenAI SDK is required. The enhancer uses
+Python's standard-library HTTP client; media loading uses the libraries already bundled
+with a normal current ComfyUI installation.
 
-## V3.1 workflow
+## Prompt enhancer server configuration
 
-1. Open **Extensions → H3 Character Ref Builder → H3 Reference Manager**.
-2. In **Characters**, create or select a character and maintain its reference library.
-3. Give each active reference the semantic role it contributes.
-4. Select two different images as **Image 1** and **Image 2**, plus one **Active Audio** reference.
-5. Optionally create reusable environments and their baseline ambience under **Scene Presets**.
-6. Add **H3 Character Reference** from **H3 → Reference** to a workflow.
-7. Pick a Character and optional Scene Preset, then enter **Video / Action Description**.
-8. Optionally enter action-specific sounds in **Additional Soundscape** and customize **Non-Diegetic Music**.
-9. Connect `image_1`, `image_2`, and `audio` to the H3 reference inputs.
-10. Connect `prompt` to the MiniMax H3 prompt input.
+Set these environment variables on the server process that launches ComfyUI:
 
-The node does not rewrite or enhance the action description. It trims surrounding whitespace, places the text under `detailed_description`, and adds `[Shot 1]` only when the user has not already supplied it.
+| Variable | Required | Purpose |
+|---|---:|---|
+| `H3_PROMPT_ENHANCER_API_KEY` | Yes | Provider credential; never exposed as a node widget or serialized into workflows |
+| `H3_PROMPT_ENHANCER_BASE_URL` | Yes | OpenAI-compatible API base URL, such as `https://provider.example/v1` |
+| `H3_PROMPT_ENHANCER_MODEL` | Unless the Model widget is filled | Default provider model identifier |
+| `H3_PROMPT_ENHANCER_TIMEOUT_SECONDS` | No | Request timeout from 1–300 seconds; defaults to 60 |
 
-## Character reference libraries
+If the base URL does not already end in `/chat/completions`, that path is appended.
+Restart ComfyUI after changing its environment. Never paste the API key into a workflow,
+node widget, Scene Preset, or Character Manager field.
 
-Each character can store up to nine images and three audio clips. References have user-editable labels and immutable media UUIDs. Replacing a file preserves that UUID even when its extension changes.
+## Workflow
 
-The node outputs only the selected defaults:
+1. Open the **H3 Reference Manager** from the top bar or at `/character-manager`.
+2. Create/select a character, maintain its references, and select two active images plus
+   one active audio reference.
+3. Optionally create and select a Scene Preset with a raw environment definition and
+   baseline soundscape.
+4. Add **H3 Character Reference** from **H3 → Reference**.
+5. Connect its `image_1`, `image_2`, and `audio` outputs to the H3 reference inputs.
+6. Add **H3 Prompt Enhancer** from **H3 → Prompt**.
+7. Connect `character_context` from the first node to the enhancer.
+8. Enter a duration, rough Action Idea, optional Additional Notes, music, and model.
+9. Connect the enhancer's `prompt` output to the MiniMax H3 prompt input.
 
-```text
-IMAGE  image_1
-IMAGE  image_2
-AUDIO  audio
-STRING prompt
-```
+The two inspection outputs expose exactly the structured action fields used during final
+assembly: `detailed_description` and `additional_soundscape`.
 
-The first three outputs retain their original positions for existing workflows. Defaults are resolved by media UUID, never by collection order.
+## H3 Character Reference
 
-### Image roles
-
-| Stored role | Manager label | Prompt contribution |
-|---|---|---|
-| `face_identity` | Face / Identity | Facial identity, structure, eyes, hair, and recognizable facial detail |
-| `full_body_identity` | Full Body / Physical Identity | Full-body identity, body proportions, build, silhouette, skin tone, and distinctive physical details; source wardrobe is not preserved |
-| `alternate_identity` | Alternate Identity Angle | Additional identity, anatomy, and alternate-angle detail |
-| `wardrobe` | Wardrobe / Clothing | Wardrobe, clothing details, colors, and accessories |
-| `pose_orientation` | Pose / Orientation | Body orientation and pose only; not source background, lighting, or framing |
-| `expression` | Expression | Facial expression and performance only; not source background, lighting, or framing |
-| `general` | General Reference | Additional appearance detail |
-
-Only the two active image defaults contribute to `<Subject 1>`. They are complementary references for one character, not separate subjects. Full Body / Physical Identity defines the person's body, while Wardrobe / Clothing is the separate role that intentionally contributes clothing.
-
-### Audio roles
-
-| Stored role | Manager label | Prompt contribution |
-|---|---|---|
-| `voice_identity` | Voice Identity | Voice timbre, accent, pacing, and delivery |
-| `delivery_emotion` | Delivery / Emotion | Vocal tone, emotion, intensity, and pacing |
-| `general` | General Audio Reference | General vocal characteristics and delivery |
-
-Character audio is always an H3 audio reference. Generated retention uses `<Audio 1>: reference`; it never uses `fully_preserved` for audio and explicitly says not to copy the source signal, dialogue, or words.
-
-### Character Identity Details
-
-The optional character description is presented as **Character Identity Details** and is appended as stable user-authored information inside `<Subject 1>`. The manager/store removes a pasted leading `<Subject 1> is` prefix to avoid duplicated syntax. It does not infer characteristics from files, labels, or images.
-
-## Scene Presets
-
-Scene Presets are independent reusable environments managed in the second tab. Each has an immutable UUID, editable name, multiline **Scene Definition**, and optional multiline **Default Soundscape**. Renaming does not break workflows because the node stores the UUID.
-
-When selected, the stored definition becomes:
+Inputs:
 
 ```text
-<Subject 2> is {scene definition}
+Character     selected character UUID
+Scene Preset  selected scene UUID or (No Scene Preset)
 ```
 
-The definition is preserved except for surrounding whitespace. A pasted leading `<Subject 2> is` prefix is removed on save. No presets are seeded automatically.
+Outputs:
 
-The **Scene Default Soundscape** describes sounds normally inherent to the environment. The node's **Additional Soundscape** describes sounds caused by this particular generation or action. The prompt uses both in that order without rewriting either value. If only one is present, it uses that value; if neither is present, it uses the generic natural-ambience fallback.
+```text
+IMAGE   image_1
+IMAGE   image_2
+AUDIO   audio
+STRING  character_context
+```
 
-The node's three multiline authoring fields are permanently labelled **Video / Action Description**, **Additional Soundscape**, and **Non-Diegetic Music**. The serialized key for Additional Soundscape remains `overall_soundscape` so existing workflows continue to load.
+The first three output positions and media-loading behavior are unchanged. The fourth
+output is no longer a finished prompt.
 
-The stable `(No Scene Preset)` option omits `<Subject 2>` from subject definitions, summary, and retention analysis. Additional Soundscape still works without a scene. A deleted UUID produces an explicit missing-scene error rather than silently choosing another preset.
+### Character context schema V1
 
-## Deterministic Ref2VA prompt builder
+```json
+{
+  "schema_version": 1,
+  "subject_definitions": "...",
+  "summary": "...",
+  "retention_analysis": "...",
+  "scene_definition": "...",
+  "default_soundscape": "..."
+}
+```
 
-Every generated prompt contains exactly these sections in order:
+The first three fields preserve the deterministic V3.1 wording. `scene_definition` is
+the raw selected Scene Preset definition body and `default_soundscape` is its baseline
+ambience. With no scene, both fields are empty and `<Subject 2>` is omitted from all
+deterministic sections.
+
+The context contains no image bytes, audio bytes, file paths, media labels, character
+names, or other storage details.
+
+## H3 Prompt Enhancer
+
+Inputs:
+
+```text
+STRING  character_context   connection from H3 Character Reference
+INT     duration_seconds    default 15, range 1–60
+STRING  action_idea         multiline rough action request
+STRING  additional_notes    multiline, default empty
+STRING  non_diegetic_music  multiline, default N/A
+STRING  model               model identifier; environment-derived default
+```
+
+Outputs:
+
+```text
+STRING  prompt
+STRING  detailed_description
+STRING  additional_soundscape
+```
+
+Only the duration, action idea, raw scene definition, and additional notes are sent as
+the user request. Images, audio, deterministic subject boilerplate, retention text,
+baseline ambience, and completed prompts are not sent to the provider.
+
+The dedicated system prompt lives in
+`h3_character_ref_builder/enhancer_system_prompt.py`. Its separately declared
+`SYSTEM_PROMPT_VERSION` and full content participate in cache fingerprints, so prompt
+tuning invalidates stale enhancement results without changing node architecture.
+
+### Structured provider response
+
+The enhancer first requests this strict JSON-schema shape:
+
+```json
+{
+  "detailed_description": "[Shot 1] [0-5s] ...",
+  "additional_soundscape": "..."
+}
+```
+
+`additional_soundscape` may be an empty string. If a compatible provider rejects the
+strict `response_format` with HTTP 400/422, the client retries without that parameter
+while retaining the JSON-only system instruction. Plain JSON, provider `parsed` objects,
+and accidental fenced JSON blocks are accepted. Missing fields, wrong types, invalid
+JSON, or a detailed description without `[Shot 1]` produce an explicit node error.
+
+## Final prompt assembly
+
+The enhancer emits exactly these top-level sections in order:
 
 ```text
 subject_definitions:
@@ -125,95 +181,88 @@ overall_soundscape:
 non_diegetic_music:
 ```
 
-`subject_definitions` combines the two active image roles into one `<Subject 1>`, defines `<Audio 1>` from the active audio role, and adds the selected scene as `<Subject 2>`. The short summary begins with `[reference generation + audio reference]`. The user action appears only in `detailed_description`.
+The first three are copied from `character_context`; the LLM cannot rewrite them.
+`detailed_description` comes from the structured LLM response.
 
-When neither a Scene Default Soundscape nor an Additional Soundscape is available, the fallback is:
+When baseline ambience and action-specific sounds both exist, assembly is explicit:
+
+```text
+<Scene Preset baseline soundscape>
+
+Additional action-specific sounds: <LLM-generated sounds>
+```
+
+If only one exists, it is used without an empty label. If neither exists, the original
+fallback remains:
 
 ```text
 Natural diegetic ambience appropriate to the scene, with synchronized physical sounds caused by the visible action.
 ```
 
-Non-diegetic music defaults to `N/A`; music is never inferred.
-
-## Supported media
-
-Images: PNG, JPEG/JPG, and WebP.
-
-Audio: WAV, MP3, FLAC, M4A, OGG, and AAC. Codec support follows the PyAV/FFmpeg stack bundled with ComfyUI. Files retain supported upload extensions and are not transcoded.
-
-## Storage and schemas
-
-Data lives beneath `folder_paths.get_user_directory()`:
-
-```text
-<ComfyUI user directory>/
-└── h3-character-ref-builder/
-    ├── characters/
-    │   └── <character UUID>/
-    │       ├── profile.json
-    │       ├── images/<media UUID>.<ext>
-    │       └── audio/<media UUID>.<ext>
-    └── scenes/
-        └── <scene UUID>/
-            └── scene.json
-```
-
-Character schema V3 adds `role` to each V2 media record while retaining character/media UUIDs, labels, paths, defaults, and description. Scene schema V2 stores `schema_version`, `id`, `name`, `definition`, and optional `default_soundscape`.
-
-All JSON writes use a temporary file, flush it to disk, and atomically replace the prior file. UUIDs, ownership, roles, media types, limits, filenames, content, and paths are validated before use.
-
-### Migration
-
-Existing V2 profiles migrate automatically on first read without renaming or moving media:
-
-- active Image 1 → `face_identity`
-- active Image 2 → `full_body_identity`
-- active Audio → `voice_identity`
-- unused images/audio → `general`
-
-An already present valid role is preserved. The update is atomic and idempotent.
-
-V1 profiles still migrate safely into the UUID-addressed library. Their original two images and audio retain the same default behavior and receive the corresponding V3 roles. Legacy files are deleted only after copied media validates and the new profile is atomically written.
-
-Scene schema V1 presets migrate automatically on first read. Their UUID, name, and definition are preserved, `default_soundscape` is initialized to an empty string, and the atomic migration is idempotent.
-
-## HTTP API
-
-```text
-GET    /api/h3-character-ref-builder/characters
-GET    /api/h3-character-ref-builder/characters/{character_id}
-POST   /api/h3-character-ref-builder/characters
-PUT    /api/h3-character-ref-builder/characters/{character_id}
-DELETE /api/h3-character-ref-builder/characters/{character_id}
-
-POST   /api/h3-character-ref-builder/characters/{character_id}/media
-GET    /api/h3-character-ref-builder/characters/{character_id}/media/{media_id}
-PUT    /api/h3-character-ref-builder/characters/{character_id}/media/{media_id}
-DELETE /api/h3-character-ref-builder/characters/{character_id}/media/{media_id}
-PUT    /api/h3-character-ref-builder/characters/{character_id}/defaults
-
-GET    /api/h3-character-ref-builder/scenes
-GET    /api/h3-character-ref-builder/scenes/{scene_id}
-POST   /api/h3-character-ref-builder/scenes
-PUT    /api/h3-character-ref-builder/scenes/{scene_id}
-DELETE /api/h3-character-ref-builder/scenes/{scene_id}
-```
-
-Media creation accepts multipart `type`, `label`, `role`, and `file`. Media updates accept JSON `label` and/or `role`, or multipart metadata plus an optional replacement file. Scene create/update operations accept `name`, `definition`, and `default_soundscape`; list responses contain only UUID and name, while detail responses include both multiline fields.
-
-Responses use `{"ok": true, "data": ...}` or `{"ok": false, "error": {"message": "..."}}`. Preview routes resolve only media UUIDs belonging to the requested character and never accept arbitrary filesystem paths.
+Music is copied from the widget and falls back to `N/A` when blank.
 
 ## Cache behavior
 
-The node fingerprint includes selected files, selected media UUIDs and roles, defaults, Character Identity Details, selected scene UUID, definition, default soundscape, and the node's prompt-authoring fields. It deliberately excludes unused media, media labels, character names, scene names, unrelated characters, and unrelated scenes where those values cannot affect outputs or prompt text.
+**H3 Character Reference** fingerprints only the selected character/reference state and
+selected Scene Preset definition/soundscape. Unused references, unrelated characters,
+unrelated scenes, character names, scene names, and media labels do not invalidate it.
+
+**H3 Prompt Enhancer** uses two cache layers:
+
+- Its ComfyUI fingerprint covers complete final-output inputs: full context, duration,
+  action, notes, music, model/base URL configuration, and system-prompt content.
+- A bounded in-process paid-call cache covers only data actually affecting the LLM:
+  scene definition, duration, action, notes, endpoint, model, and system prompt.
+
+Consequently, re-queuing unchanged nodes uses normal ComfyUI caching. Changing only
+music, deterministic subject text, or Scene Preset baseline ambience rebuilds the final
+prompt without another API call. Changing action, duration, notes, model/provider, raw
+scene definition, or system prompt causes a new enhancement request. The API key is
+excluded from workflow data, fingerprints, logs, and errors.
+
+## Existing workflow migration
+
+The `H3CharacterReference` node type and its first three output positions are retained.
+Its Python execution methods accept and ignore legacy prompt-authoring arguments where
+ComfyUI supplies them by name or position. The three obsolete widgets are no longer
+declared for new nodes.
+
+This interface change is intentional: the fourth output now contains context JSON, not a
+completed prompt. Existing workflows must add **H3 Prompt Enhancer**, reconnect the
+fourth output through it, and move their action/music authoring into the new node.
+Depending on the ComfyUI frontend version, recreating an old Character Reference node
+may be necessary to discard serialized legacy widget values cleanly.
+
+## Storage and media behavior
+
+Data remains beneath `folder_paths.get_user_directory()`:
+
+```text
+<ComfyUI user directory>/h3-character-ref-builder/
+├── characters/<character UUID>/
+│   ├── profile.json
+│   ├── images/<media UUID>.<ext>
+│   └── audio/<media UUID>.<ext>
+└── scenes/<scene UUID>/scene.json
+```
+
+Character schema V3, Scene schema V2, UUID behavior, media roles, upload validation,
+atomic writes, migrations, and Character Manager APIs are unchanged. Supported images
+remain PNG, JPEG/JPG, and WebP; supported audio remains WAV, MP3, FLAC, M4A, OGG, and
+AAC according to ComfyUI's PyAV/FFmpeg stack.
 
 ## Tests
+
+The suite uses mocked HTTP calls and never contacts a real provider:
 
 ```bash
 python -m pytest
 ```
 
-The suite covers character and scene migration, role validation and UUID stability, media limits and replacement, Scene Preset CRUD/security, exact prompt structure and role semantics, soundscape composition, UUID-based node resolution, API behavior, permanent node labels, and prompt-aware cache isolation. Native tensor/audio loader tests run when the relevant ComfyUI dependencies are installed.
+Coverage includes storage/migrations, route security, deterministic context, exact final
+section order, soundscape combinations, structured/fenced response parsing, provider
+authentication/rate-limit/server/network failures, secret redaction, and enhancement
+cache boundaries.
 
 ## License
 
