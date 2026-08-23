@@ -186,29 +186,6 @@ class H3PromptEnhancer:
     DESCRIPTION = "Enhances action choreography and assembles the final H3 prompt."
 
     @classmethod
-    def VALIDATE_INPUTS(
-        cls,
-        character_context,
-        duration_seconds,
-        system_prompt,
-        action_idea,
-        additional_notes="",
-        non_diegetic_music=DEFAULT_MUSIC,
-    ):
-        del additional_notes, non_diegetic_music
-        try:
-            parse_character_context(character_context)
-        except (TypeError, ValueError) as exc:
-            return str(exc)
-        if not 1 <= duration_seconds <= 60:
-            return "Duration must be between 1 and 60 seconds."
-        if not isinstance(system_prompt, str) or not system_prompt.strip():
-            return "System Prompt is required."
-        if not action_idea.strip():
-            return "Action Idea is required."
-        return True
-
-    @classmethod
     def IS_CHANGED(
         cls,
         character_context,

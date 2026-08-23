@@ -7,7 +7,7 @@ import pytest
 from h3_character_ref_builder import prompt_enhancer as enhancer
 from h3_character_ref_builder.nodes import H3PromptEnhancer
 
-from .test_prompt_enhancer import character_context, context_json
+from .test_prompt_enhancer import character_context
 
 
 def test_system_prompt_is_a_workflow_editable_multiline_widget():
@@ -28,11 +28,7 @@ def test_system_prompt_is_a_workflow_editable_multiline_widget():
     assert "forceInput" not in options
 
 
-def test_empty_system_prompt_fails_node_and_runtime_validation():
-    assert H3PromptEnhancer.VALIDATE_INPUTS(
-        context_json(), 15, " \n\t ", "walk"
-    ) == "System Prompt is required."
-
+def test_empty_system_prompt_fails_runtime_validation():
     with pytest.raises(enhancer.PromptEnhancerError, match="System Prompt is required"):
         enhancer.get_enhancement(
             character_context=character_context(),
