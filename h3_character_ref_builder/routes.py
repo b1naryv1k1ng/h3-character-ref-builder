@@ -19,6 +19,11 @@ from .character_store import (
     ProfileNotFound,
     get_default_store,
 )
+from .enhancer_config import (
+    InvalidProviderConfig,
+    ProviderConfigStorageError,
+    get_default_provider_config_store,
+)
 from .media import InvalidMedia
 from .scene_store import (
     DuplicateSceneName,
@@ -68,10 +73,13 @@ def _error_status(error: Exception) -> int:
             InvalidSceneId,
             InvalidScene,
             SceneCorrupt,
+            InvalidProviderConfig,
             ValueError,
         ),
     ):
         return 400
+    if isinstance(error, ProviderConfigStorageError):
+        return 500
     return 500
 
 
@@ -349,6 +357,54 @@ def register_routes() -> None:
         except Exception as error:
             return _error_json(web, error)
 
+    async def get_prompt_enhancer_config(request):
+        del request
+        try:
+            status = get_default_provider_config_store().status()
+            return web.json_response({"ok": True, "data": status})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def update_prompt_enhancer_config(request):
+        try:
+            payload = await _json_body(request)
+            expected = {"base_url", "model", "timeout_seconds"}
+            if set(payload) != expected:
+                raise InvalidProviderConfig(
+                    "Provider configuration must contain exactly base_url, model, "
+                    "and timeout_seconds."
+                )
+            status = get_default_provider_config_store().update_provider(
+                base_url=payload["base_url"],
+                model=payload["model"],
+                timeout_seconds=payload["timeout_seconds"],
+            )
+            return web.json_response({"ok": True, "data": status})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def set_prompt_enhancer_api_key(request):
+        try:
+            payload = await _json_body(request)
+            if set(payload) != {"api_key"}:
+                raise InvalidProviderConfig(
+                    "API key update must contain exactly api_key."
+                )
+            status = get_default_provider_config_store().set_api_key(
+                payload["api_key"]
+            )
+            return web.json_response({"ok": True, "data": status})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def clear_prompt_enhancer_api_key(request):
+        del request
+        try:
+            status = get_default_provider_config_store().clear_api_key()
+            return web.json_response({"ok": True, "data": status})
+        except Exception as error:
+            return _error_json(web, error)
+
     async def manager_page(request):
         if request.path.endswith("/"):
             raise web.HTTPFound(request.path.rstrip("/"))
@@ -382,6 +438,12 @@ def register_routes() -> None:
     routes.post(f"{API_PREFIX}/scenes")(create_scene)
     routes.put(f"{API_PREFIX}/scenes/{{id}}")(update_scene)
     routes.delete(f"{API_PREFIX}/scenes/{{id}}")(delete_scene)
+    routes.get(f"{API_PREFIX}/prompt-enhancer/config")(get_prompt_enhancer_config)
+    routes.put(f"{API_PREFIX}/prompt-enhancer/config")(update_prompt_enhancer_config)
+    routes.put(f"{API_PREFIX}/prompt-enhancer/api-key")(set_prompt_enhancer_api_key)
+    routes.delete(f"{API_PREFIX}/prompt-enhancer/api-key")(
+        clear_prompt_enhancer_api_key
+    )
     routes.get("/character-manager")(manager_page)
     routes.get("/character-manager/")(manager_page)
     routes.get("/character-manager/assets/{filename}")(manager_asset)

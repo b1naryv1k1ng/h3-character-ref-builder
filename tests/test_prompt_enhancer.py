@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from h3_character_ref_builder import prompt_enhancer as enhancer
+from h3_character_ref_builder.enhancer_config import ProviderConfigStore
 from h3_character_ref_builder.nodes import H3PromptEnhancer
 from h3_character_ref_builder.prompt_builder import (
     DEFAULT_SOUNDSCAPE,
@@ -16,6 +17,8 @@ from h3_character_ref_builder.prompt_builder import (
 )
 
 from .test_prompt_builder import SECTION_NAMES, section
+
+SYSTEM_PROMPT = "Exact workflow system instructions.\nReturn only the requested JSON."
 
 
 def character_context(**overrides):
@@ -59,7 +62,11 @@ def completion(content=None, *, parsed=None):
 
 
 @pytest.fixture(autouse=True)
-def configured_enhancer(monkeypatch):
+def configured_enhancer(monkeypatch, tmp_path):
+    config_store = ProviderConfigStore(tmp_path / "h3-character-ref-builder")
+    monkeypatch.setattr(
+        enhancer, "get_default_provider_config_store", lambda: config_store
+    )
     enhancer.clear_enhancement_cache()
     monkeypatch.setenv(enhancer.API_KEY_ENV, "test-secret-key")
     monkeypatch.setenv(enhancer.BASE_URL_ENV, "https://provider.example/v1")
@@ -168,9 +175,10 @@ def test_api_request_uses_strict_schema_and_sends_only_enhancement_context(monke
         return FakeResponse(completion(json.dumps(result)))
 
     monkeypatch.setattr(enhancer, "urlopen", fake_open)
-    config = enhancer.load_enhancer_config("widget-model")
+    config = enhancer.load_enhancer_config()
     output = enhancer._request_enhancement(
         config=config,
+        system_prompt=SYSTEM_PROMPT,
         scene_definition="a workshop",
         duration_seconds=12,
         action_idea="lift the cup",
@@ -179,7 +187,12 @@ def test_api_request_uses_strict_schema_and_sends_only_enhancement_context(monke
 
     assert output == result
     body = captured["body"]
-    assert body["model"] == "widget-model"
+    assert body["model"] == "environment-model"
+    assert body["messages"][0] == {
+        "role": "system",
+        "content": SYSTEM_PROMPT,
+    }
+    assert len(body["messages"]) == 2
     assert body["response_format"]["type"] == "json_schema"
     assert body["response_format"]["json_schema"]["strict"] is True
     user_payload = json.loads(body["messages"][1]["content"])
@@ -190,10 +203,34 @@ def test_api_request_uses_strict_schema_and_sends_only_enhancement_context(monke
         "additional_notes": "keep the hand steady",
     }
     serialized_user_payload = json.dumps(user_payload)
+    assert SYSTEM_PROMPT not in serialized_user_payload
+    assert "system_prompt" not in user_payload
     assert "subject_definitions" not in serialized_user_payload
     assert "retention_analysis" not in serialized_user_payload
     assert captured["authorization"] == "Bearer test-secret-key"
     assert captured["timeout"] == 60
+
+
+def test_request_payload_omits_empty_optional_context_fields():
+    payload = enhancer._request_payload(
+        config=enhancer.load_enhancer_config(),
+        system_prompt=SYSTEM_PROMPT,
+        scene_definition="  \n ",
+        duration_seconds=8,
+        action_idea="look toward the door",
+        additional_notes="\t",
+        structured=True,
+    )
+
+    assert payload["messages"][0] == {
+        "role": "system",
+        "content": SYSTEM_PROMPT,
+    }
+    assert json.loads(payload["messages"][1]["content"]) == {
+        "duration_seconds": 8,
+        "action_idea": "look toward the door",
+    }
+    assert len(payload["messages"]) == 2
 
 
 def test_api_retries_without_response_format_when_provider_rejects_it(monkeypatch):
@@ -219,7 +256,8 @@ def test_api_retries_without_response_format_when_provider_rejects_it(monkeypatc
 
     monkeypatch.setattr(enhancer, "urlopen", fake_open)
     output = enhancer._request_enhancement(
-        config=enhancer.load_enhancer_config("model"),
+        config=enhancer.load_enhancer_config(),
+        system_prompt=SYSTEM_PROMPT,
         scene_definition="",
         duration_seconds=2,
         action_idea="nod",
@@ -254,7 +292,8 @@ def test_provider_http_errors_are_clear(monkeypatch, status, expected):
     monkeypatch.setattr(enhancer, "urlopen", fake_open)
     with pytest.raises(enhancer.PromptEnhancerError, match=expected):
         enhancer._request_enhancement(
-            config=enhancer.load_enhancer_config("model"),
+            config=enhancer.load_enhancer_config(),
+            system_prompt=SYSTEM_PROMPT,
             scene_definition="",
             duration_seconds=4,
             action_idea="turn",
@@ -263,7 +302,7 @@ def test_provider_http_errors_are_clear(monkeypatch, status, expected):
 
 
 def test_network_timeout_and_malformed_provider_response_are_clear(monkeypatch):
-    config = enhancer.load_enhancer_config("model")
+    config = enhancer.load_enhancer_config()
     monkeypatch.setattr(
         enhancer,
         "urlopen",
@@ -272,6 +311,7 @@ def test_network_timeout_and_malformed_provider_response_are_clear(monkeypatch):
     with pytest.raises(enhancer.PromptEnhancerError, match="timed out"):
         enhancer._request_enhancement(
             config=config,
+            system_prompt=SYSTEM_PROMPT,
             scene_definition="",
             duration_seconds=4,
             action_idea="turn",
@@ -286,6 +326,7 @@ def test_network_timeout_and_malformed_provider_response_are_clear(monkeypatch):
     with pytest.raises(enhancer.PromptEnhancerError, match=r"missing choices\[0\]"):
         enhancer._request_enhancement(
             config=config,
+            system_prompt=SYSTEM_PROMPT,
             scene_definition="",
             duration_seconds=4,
             action_idea="turn",
@@ -296,7 +337,7 @@ def test_network_timeout_and_malformed_provider_response_are_clear(monkeypatch):
 def test_missing_api_key_and_error_text_never_expose_key(monkeypatch):
     monkeypatch.delenv(enhancer.API_KEY_ENV)
     with pytest.raises(enhancer.PromptEnhancerError, match=enhancer.API_KEY_ENV):
-        enhancer.load_enhancer_config("model")
+        enhancer.load_enhancer_config()
 
     secret = "never-print-this-key"
     monkeypatch.setenv(enhancer.API_KEY_ENV, secret)
@@ -311,7 +352,8 @@ def test_missing_api_key_and_error_text_never_expose_key(monkeypatch):
     monkeypatch.setattr(enhancer, "urlopen", fake_open)
     with pytest.raises(enhancer.PromptEnhancerError) as error:
         enhancer._request_enhancement(
-            config=enhancer.load_enhancer_config("model"),
+            config=enhancer.load_enhancer_config(),
+            system_prompt=SYSTEM_PROMPT,
             scene_definition="",
             duration_seconds=4,
             action_idea="turn",
@@ -334,27 +376,35 @@ def test_paid_call_cache_reuses_same_inputs_and_music_or_baseline_changes(monkey
     monkeypatch.setattr(enhancer, "_request_enhancement", fake_request)
     node = H3PromptEnhancer()
     first = node.enhance_prompt(
-        context_json(), 15, "walk", "", "N/A", "model"
+        context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
     )
     second = node.enhance_prompt(
-        context_json(), 15, "walk", "", "soft piano", "model"
+        context_json(), 15, SYSTEM_PROMPT, "walk", "", "soft piano"
     )
     changed_baseline = node.enhance_prompt(
         context_json(default_soundscape="changed baseline"),
         15,
+        SYSTEM_PROMPT,
         "walk",
         "",
         "soft piano",
-        "model",
     )
 
     assert len(calls) == 1
+    assert "default_soundscape" not in calls[0]
     assert first[1:] == second[1:] == changed_baseline[1:]
     assert section(first[0], "non_diegetic_music") == "N/A"
     assert section(second[0], "non_diegetic_music") == "soft piano"
     assert section(changed_baseline[0], "overall_soundscape").startswith(
         "changed baseline"
     )
+
+    node.enhance_prompt(
+        context_json(), 15, "Different workflow instructions.", "walk", "", "N/A"
+    )
+    assert len(calls) == 2
+    assert calls[0]["system_prompt"] == SYSTEM_PROMPT
+    assert calls[1]["system_prompt"] == "Different workflow instructions."
 
 
 def test_paid_call_cache_changes_for_action_duration_and_scene_context(monkeypatch):
@@ -369,8 +419,8 @@ def test_paid_call_cache_changes_for_action_duration_and_scene_context(monkeypat
 
     monkeypatch.setattr(enhancer, "_request_enhancement", fake_request)
     common = {
+        "system_prompt": SYSTEM_PROMPT,
         "additional_notes": "",
-        "model": "model",
     }
     enhancer.get_enhancement(
         character_context=character_context(),
@@ -398,20 +448,27 @@ def test_paid_call_cache_changes_for_action_duration_and_scene_context(monkeypat
     )
 
     assert len(calls) == 4
+    assert calls[2]["scene_definition"] == "a quiet workshop"
+    assert calls[3]["scene_definition"] == "a different room"
 
 
 def test_comfy_fingerprint_tracks_final_inputs_but_never_api_key(monkeypatch):
-    base = H3PromptEnhancer.IS_CHANGED(context_json(), 15, "walk", "", "N/A", "m")
+    base = H3PromptEnhancer.IS_CHANGED(
+        context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
+    )
     assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, "walk", "", "music", "m"
+        context_json(), 15, SYSTEM_PROMPT, "walk", "", "music"
     ) != base
     assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 20, "walk", "", "N/A", "m"
+        context_json(), 20, SYSTEM_PROMPT, "walk", "", "N/A"
     ) != base
     assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, "run", "", "N/A", "m"
+        context_json(), 15, SYSTEM_PROMPT, "run", "", "N/A"
+    ) != base
+    assert H3PromptEnhancer.IS_CHANGED(
+        context_json(), 15, "changed system", "walk", "", "N/A"
     ) != base
     monkeypatch.setenv(enhancer.API_KEY_ENV, "a-different-secret")
     assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, "walk", "", "N/A", "m"
+        context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
     ) == base

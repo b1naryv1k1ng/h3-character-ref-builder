@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -13,24 +12,17 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from .enhancer_system_prompt import (
-    H3_ACTION_ENHANCER_SYSTEM_PROMPT,
-    SYSTEM_PROMPT_VERSION,
+from .enhancer_config import (
+    API_KEY_ENV,
+    BASE_URL_ENV,
+    MODEL_ENV,
+    TIMEOUT_ENV,
+    ProviderConfigError,
+    get_default_provider_config_store,
 )
 
-API_KEY_ENV = "H3_PROMPT_ENHANCER_API_KEY"
-BASE_URL_ENV = "H3_PROMPT_ENHANCER_BASE_URL"
-MODEL_ENV = "H3_PROMPT_ENHANCER_MODEL"
-TIMEOUT_ENV = "H3_PROMPT_ENHANCER_TIMEOUT_SECONDS"
-DEFAULT_TIMEOUT_SECONDS = 60.0
 MAX_RESPONSE_BYTES = 1024 * 1024
 ENHANCEMENT_CACHE_SIZE = 128
-
-_SYSTEM_PROMPT_FINGERPRINT = hashlib.sha256(
-    (
-        SYSTEM_PROMPT_VERSION + "\0" + H3_ACTION_ENHANCER_SYSTEM_PROMPT
-    ).encode("utf-8")
-).hexdigest()
 
 
 class PromptEnhancerError(RuntimeError):
@@ -76,40 +68,21 @@ def _chat_endpoint(base_url: str) -> str:
     return cleaned + "/chat/completions"
 
 
-def _timeout_from_environment() -> float:
-    raw = os.getenv(TIMEOUT_ENV, "").strip()
-    if not raw:
-        return DEFAULT_TIMEOUT_SECONDS
+def load_enhancer_config() -> EnhancerConfig:
     try:
-        value = float(raw)
-    except ValueError as exc:
-        raise PromptEnhancerError(f"{TIMEOUT_ENV} must be a number.") from exc
-    if not 1 <= value <= 300:
-        raise PromptEnhancerError(f"{TIMEOUT_ENV} must be between 1 and 300 seconds.")
-    return value
-
-
-def load_enhancer_config(model: str = "") -> EnhancerConfig:
-    api_key = os.getenv(API_KEY_ENV, "").strip()
-    if not api_key:
+        resolved = get_default_provider_config_store().resolve()
+    except ProviderConfigError as exc:
+        raise PromptEnhancerError(str(exc)) from exc
+    if not resolved.api_key:
         raise PromptEnhancerError(
-            f"Missing prompt enhancer API key. Set {API_KEY_ENV} on the ComfyUI server."
-        )
-    base_url = os.getenv(BASE_URL_ENV, "").strip()
-    if not base_url:
-        raise PromptEnhancerError(
-            f"Missing prompt enhancer base URL. Set {BASE_URL_ENV} on the ComfyUI server."
-        )
-    resolved_model = model.strip() or os.getenv(MODEL_ENV, "").strip()
-    if not resolved_model:
-        raise PromptEnhancerError(
-            f"Missing prompt enhancer model. Set the Model widget or {MODEL_ENV}."
+            "Prompt enhancer API key is not configured. Add one in ComfyUI Settings "
+            f"under H3 Character Ref Builder, or set {API_KEY_ENV}."
         )
     return EnhancerConfig(
-        api_key=api_key,
-        endpoint=_chat_endpoint(base_url),
-        model=resolved_model,
-        timeout_seconds=_timeout_from_environment(),
+        api_key=resolved.api_key,
+        endpoint=_chat_endpoint(resolved.base_url),
+        model=resolved.model,
+        timeout_seconds=resolved.timeout_seconds,
     )
 
 
@@ -135,6 +108,7 @@ def _response_schema() -> dict[str, Any]:
 def _request_payload(
     *,
     config: EnhancerConfig,
+    system_prompt: str,
     scene_definition: str,
     duration_seconds: int,
     action_idea: str,
@@ -144,13 +118,15 @@ def _request_payload(
     task = {
         "duration_seconds": duration_seconds,
         "action_idea": action_idea,
-        "scene_definition": scene_definition,
-        "additional_notes": additional_notes,
     }
+    if scene_definition.strip():
+        task["scene_definition"] = scene_definition.strip()
+    if additional_notes.strip():
+        task["additional_notes"] = additional_notes.strip()
     payload: dict[str, Any] = {
         "model": config.model,
         "messages": [
-            {"role": "system", "content": H3_ACTION_ENHANCER_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": json.dumps(task, ensure_ascii=False, indent=2),
@@ -319,6 +295,7 @@ def parse_enhancement_content(content: object) -> dict[str, str]:
 def _request_enhancement(
     *,
     config: EnhancerConfig,
+    system_prompt: str,
     scene_definition: str,
     duration_seconds: int,
     action_idea: str,
@@ -326,6 +303,7 @@ def _request_enhancement(
 ) -> dict[str, str]:
     strict_payload = _request_payload(
         config=config,
+        system_prompt=system_prompt,
         scene_definition=scene_definition,
         duration_seconds=duration_seconds,
         action_idea=action_idea,
@@ -339,6 +317,7 @@ def _request_enhancement(
             _raise_http_failure(error)
         fallback_payload = _request_payload(
             config=config,
+            system_prompt=system_prompt,
             scene_definition=scene_definition,
             duration_seconds=duration_seconds,
             action_idea=action_idea,
@@ -361,6 +340,7 @@ def _request_enhancement(
 def _enhancement_cache_key(
     *,
     config: EnhancerConfig,
+    system_prompt: str,
     scene_definition: str,
     duration_seconds: int,
     action_idea: str,
@@ -369,7 +349,7 @@ def _enhancement_cache_key(
     relevant = {
         "endpoint": config.endpoint,
         "model": config.model,
-        "system_prompt": _SYSTEM_PROMPT_FINGERPRINT,
+        "system_prompt": system_prompt,
         "scene_definition": scene_definition,
         "duration_seconds": duration_seconds,
         "action_idea": action_idea,
@@ -384,20 +364,23 @@ def get_enhancement(
     *,
     character_context: dict[str, Any],
     duration_seconds: int,
+    system_prompt: str,
     action_idea: str,
     additional_notes: str,
-    model: str,
 ) -> dict[str, str]:
     if not 1 <= duration_seconds <= 60:
         raise PromptEnhancerError("Duration must be between 1 and 60 seconds.")
+    if not isinstance(system_prompt, str) or not system_prompt.strip():
+        raise PromptEnhancerError("System Prompt is required.")
     clean_action = action_idea.strip()
     if not clean_action:
         raise PromptEnhancerError("Action Idea is required.")
     clean_notes = additional_notes.strip()
     scene_definition = str(character_context["scene_definition"]).strip()
-    config = load_enhancer_config(model)
+    config = load_enhancer_config()
     cache_key = _enhancement_cache_key(
         config=config,
+        system_prompt=system_prompt,
         scene_definition=scene_definition,
         duration_seconds=duration_seconds,
         action_idea=clean_action,
@@ -413,6 +396,7 @@ def get_enhancement(
             }
     result = _request_enhancement(
         config=config,
+        system_prompt=system_prompt,
         scene_definition=scene_definition,
         duration_seconds=duration_seconds,
         action_idea=clean_action,
@@ -433,20 +417,24 @@ def enhancer_execution_fingerprint(
     *,
     character_context: str,
     duration_seconds: int,
+    system_prompt: str,
     action_idea: str,
     additional_notes: str,
     non_diegetic_music: str,
-    model: str,
 ) -> str:
+    try:
+        provider = get_default_provider_config_store().resolve()
+    except ProviderConfigError as exc:
+        raise PromptEnhancerError(str(exc)) from exc
     relevant = {
         "character_context": character_context,
         "duration_seconds": duration_seconds,
+        "system_prompt": system_prompt,
         "action_idea": action_idea,
         "additional_notes": additional_notes,
         "non_diegetic_music": non_diegetic_music,
-        "base_url": os.getenv(BASE_URL_ENV, "").strip(),
-        "model": model.strip() or os.getenv(MODEL_ENV, "").strip(),
-        "system_prompt": _SYSTEM_PROMPT_FINGERPRINT,
+        "base_url": provider.base_url,
+        "model": provider.model,
     }
     return hashlib.sha256(
         json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode("utf-8")

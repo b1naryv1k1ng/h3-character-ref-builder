@@ -6,7 +6,10 @@ from urllib.error import URLError
 import pytest
 
 from h3_character_ref_builder import prompt_enhancer as enhancer
+from h3_character_ref_builder.enhancer_config import ProviderConfigStore
 from h3_character_ref_builder.nodes import H3PromptEnhancer
+
+SYSTEM_PROMPT = "Workflow system instructions."
 
 
 class RawResponse:
@@ -24,31 +27,25 @@ class RawResponse:
 
 
 @pytest.fixture(autouse=True)
-def environment(monkeypatch):
+def environment(monkeypatch, tmp_path):
+    config_store = ProviderConfigStore(tmp_path / "h3-character-ref-builder")
+    monkeypatch.setattr(
+        enhancer, "get_default_provider_config_store", lambda: config_store
+    )
     monkeypatch.setenv(enhancer.API_KEY_ENV, "secret")
     monkeypatch.setenv(enhancer.BASE_URL_ENV, "https://provider.example/v1")
     monkeypatch.setenv(enhancer.MODEL_ENV, "model")
     monkeypatch.delenv(enhancer.TIMEOUT_ENV, raising=False)
 
 
-def test_missing_base_url_model_and_invalid_timeout_are_clear(monkeypatch):
-    monkeypatch.delenv(enhancer.BASE_URL_ENV)
-    with pytest.raises(enhancer.PromptEnhancerError, match=enhancer.BASE_URL_ENV):
-        enhancer.load_enhancer_config("model")
-
-    monkeypatch.setenv(enhancer.BASE_URL_ENV, "https://provider.example/v1")
-    monkeypatch.delenv(enhancer.MODEL_ENV)
-    with pytest.raises(enhancer.PromptEnhancerError, match=enhancer.MODEL_ENV):
-        enhancer.load_enhancer_config("")
-
-    monkeypatch.setenv(enhancer.MODEL_ENV, "model")
+def test_invalid_environment_timeout_is_clear(monkeypatch):
     monkeypatch.setenv(enhancer.TIMEOUT_ENV, "not-a-number")
-    with pytest.raises(enhancer.PromptEnhancerError, match=enhancer.TIMEOUT_ENV):
-        enhancer.load_enhancer_config("")
+    with pytest.raises(enhancer.PromptEnhancerError, match="Request Timeout"):
+        enhancer.load_enhancer_config()
 
 
 def test_dns_failure_and_malformed_http_json_are_clear(monkeypatch):
-    config = enhancer.load_enhancer_config("")
+    config = enhancer.load_enhancer_config()
     monkeypatch.setattr(
         enhancer,
         "urlopen",
@@ -59,6 +56,7 @@ def test_dns_failure_and_malformed_http_json_are_clear(monkeypatch):
     with pytest.raises(enhancer.PromptEnhancerError, match="Network failure"):
         enhancer._request_enhancement(
             config=config,
+            system_prompt=SYSTEM_PROMPT,
             scene_definition="",
             duration_seconds=4,
             action_idea="turn",
@@ -73,6 +71,7 @@ def test_dns_failure_and_malformed_http_json_are_clear(monkeypatch):
     with pytest.raises(enhancer.PromptEnhancerError, match="malformed JSON"):
         enhancer._request_enhancement(
             config=config,
+            system_prompt=SYSTEM_PROMPT,
             scene_definition="",
             duration_seconds=4,
             action_idea="turn",
@@ -84,6 +83,13 @@ def test_api_key_is_not_a_widget_and_both_nodes_are_registered():
     inputs = H3PromptEnhancer.INPUT_TYPES()["required"]
     assert enhancer.API_KEY_ENV not in inputs
     assert "api_key" not in inputs
+    assert "model" not in inputs
+    assert "base_url" not in inputs
+    assert "timeout" not in inputs
+    assert inputs["system_prompt"][0] == "STRING"
+    assert inputs["system_prompt"][1]["multiline"] is True
+    assert inputs["system_prompt"][1]["default"] == ""
+    assert "forceInput" not in inputs["system_prompt"][1]
 
     registration = (Path(__file__).parents[1] / "__init__.py").read_text(
         encoding="utf-8"

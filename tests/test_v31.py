@@ -206,6 +206,7 @@ def test_character_node_removes_authoring_widgets_and_enhancer_owns_them(
     assert set(H3CharacterReference.INPUT_TYPES()["optional"]) == {"scene"}
     required = H3PromptEnhancer.INPUT_TYPES()["required"]
     expected = {
+        "system_prompt": "System Prompt",
         "action_idea": "Action Idea",
         "additional_notes": "Additional Notes",
         "non_diegetic_music": "Non-Diegetic Music",
@@ -215,6 +216,8 @@ def test_character_node_removes_authoring_widgets_and_enhancer_owns_them(
         assert input_type == "STRING"
         assert options["multiline"] is True
         assert options["label"] == label
+    assert required["system_prompt"][1]["default"] == ""
+    assert "forceInput" not in required["system_prompt"][1]
     assert required["additional_notes"][1]["default"] == ""
     assert required["non_diegetic_music"][1]["default"] == "N/A"
 

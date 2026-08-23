@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 
 from .character_store import (
     InvalidCharacterId,
@@ -19,7 +18,6 @@ from .prompt_builder import (
     parse_character_context,
 )
 from .prompt_enhancer import (
-    MODEL_ENV,
     PromptEnhancerError,
     enhancer_execution_fingerprint,
     get_enhancement,
@@ -138,6 +136,19 @@ class H3PromptEnhancer:
                     "INT",
                     {"default": 15, "min": 1, "max": 60, "step": 1},
                 ),
+                "system_prompt": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                        "label": "System Prompt",
+                        "tooltip": (
+                            "Workflow-owned provider instructions. This widget can be "
+                            "converted to a connected STRING input in ComfyUI."
+                        ),
+                    },
+                ),
                 "action_idea": (
                     "STRING",
                     {
@@ -165,17 +176,6 @@ class H3PromptEnhancer:
                         "label": "Non-Diegetic Music",
                     },
                 ),
-                "model": (
-                    "STRING",
-                    {
-                        "default": os.getenv(MODEL_ENV, ""),
-                        "label": "Model",
-                        "tooltip": (
-                            "OpenAI-compatible model identifier; defaults to "
-                            f"{MODEL_ENV}."
-                        ),
-                    },
-                ),
             }
         }
 
@@ -190,18 +190,20 @@ class H3PromptEnhancer:
         cls,
         character_context,
         duration_seconds,
+        system_prompt,
         action_idea,
         additional_notes="",
         non_diegetic_music=DEFAULT_MUSIC,
-        model="",
     ):
-        del additional_notes, non_diegetic_music, model
+        del additional_notes, non_diegetic_music
         try:
             parse_character_context(character_context)
         except (TypeError, ValueError) as exc:
             return str(exc)
         if not 1 <= duration_seconds <= 60:
             return "Duration must be between 1 and 60 seconds."
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            return "System Prompt is required."
         if not action_idea.strip():
             return "Action Idea is required."
         return True
@@ -211,37 +213,37 @@ class H3PromptEnhancer:
         cls,
         character_context,
         duration_seconds,
+        system_prompt,
         action_idea,
         additional_notes="",
         non_diegetic_music=DEFAULT_MUSIC,
-        model="",
     ):
         return enhancer_execution_fingerprint(
             character_context=character_context,
             duration_seconds=duration_seconds,
+            system_prompt=system_prompt,
             action_idea=action_idea,
             additional_notes=additional_notes,
             non_diegetic_music=non_diegetic_music,
-            model=model,
         )
 
     def enhance_prompt(
         self,
         character_context,
         duration_seconds,
+        system_prompt,
         action_idea,
         additional_notes="",
         non_diegetic_music=DEFAULT_MUSIC,
-        model="",
     ):
         try:
             context = parse_character_context(character_context)
             enhancement = get_enhancement(
                 character_context=context,
                 duration_seconds=duration_seconds,
+                system_prompt=system_prompt,
                 action_idea=action_idea,
                 additional_notes=additional_notes,
-                model=model,
             )
         except (TypeError, ValueError, PromptEnhancerError) as exc:
             raise RuntimeError(str(exc)) from exc

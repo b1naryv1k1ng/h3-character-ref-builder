@@ -42,20 +42,35 @@ Restart ComfyUI after cloning or updating. No OpenAI SDK is required. The enhanc
 Python's standard-library HTTP client; media loading uses the libraries already bundled
 with a normal current ComfyUI installation.
 
-## Prompt enhancer server configuration
+## Prompt enhancer configuration
 
-Set these environment variables on the server process that launches ComfyUI:
+Open ComfyUI **Settings → H3 Character Ref Builder → Prompt Enhancer** to configure:
 
-| Variable | Required | Purpose |
-|---|---:|---|
-| `H3_PROMPT_ENHANCER_API_KEY` | Yes | Provider credential; never exposed as a node widget or serialized into workflows |
-| `H3_PROMPT_ENHANCER_BASE_URL` | Yes | OpenAI-compatible API base URL, such as `https://provider.example/v1` |
-| `H3_PROMPT_ENHANCER_MODEL` | Unless the Model widget is filled | Default provider model identifier |
-| `H3_PROMPT_ENHANCER_TIMEOUT_SECONDS` | No | Request timeout from 1–300 seconds; defaults to 60 |
+- API Base URL (default `https://api.venice.ai/api/v1`)
+- API Model (default `olafangensan-glm-4.7-flash-heretic`)
+- Request Timeout (integer seconds, 1–300; default 60)
+- API Key
 
-If the base URL does not already end in `/chat/completions`, that path is appended.
-Restart ComfyUI after changing its environment. Never paste the API key into a workflow,
-node widget, Scene Preset, or Character Manager field.
+The API key control is write-only. Settings shows whether a saved or environment key is
+available, but the backend never returns the credential and the field is never
+repopulated. Saved provider configuration lives at
+`<ComfyUI user directory>/h3-character-ref-builder/prompt-enhancer-config.json`,
+is written atomically, and is read for each execution so changes do not require a
+ComfyUI restart.
+
+Environment variables remain fallback configuration:
+
+| Variable | Purpose |
+|---|---|
+| `H3_PROMPT_ENHANCER_API_KEY` | Provider credential |
+| `H3_PROMPT_ENHANCER_BASE_URL` | OpenAI-compatible API base URL |
+| `H3_PROMPT_ENHANCER_MODEL` | Provider model identifier |
+| `H3_PROMPT_ENHANCER_TIMEOUT_SECONDS` | Integer request timeout from 1–300 seconds |
+
+Precedence is saved configuration, then environment, then built-in defaults where
+applicable. An environment API key is never copied into the saved file. If the base URL
+does not already end in `/chat/completions`, that path is appended. Never paste an API
+key into a workflow, node widget, Scene Preset, or Character Manager field.
 
 ## Workflow
 
@@ -68,7 +83,8 @@ node widget, Scene Preset, or Character Manager field.
 5. Connect its `image_1`, `image_2`, and `audio` outputs to the H3 reference inputs.
 6. Add **H3 Prompt Enhancer** from **H3 → Prompt**.
 7. Connect `character_context` from the first node to the enhancer.
-8. Enter a duration, rough Action Idea, optional Additional Notes, music, and model.
+8. Enter a duration, editable System Prompt, rough Action Idea, optional Additional
+   Notes, and music.
 9. Connect the enhancer's `prompt` output to the MiniMax H3 prompt input.
 
 The two inspection outputs expose exactly the structured action fields used during final
@@ -123,10 +139,10 @@ Inputs:
 ```text
 STRING  character_context   connection from H3 Character Reference
 INT     duration_seconds    default 15, range 1–60
+STRING  system_prompt       multiline workflow-owned provider instructions
 STRING  action_idea         multiline rough action request
 STRING  additional_notes    multiline, default empty
 STRING  non_diegetic_music  multiline, default N/A
-STRING  model               model identifier; environment-derived default
 ```
 
 Outputs:
@@ -137,14 +153,16 @@ STRING  detailed_description
 STRING  additional_soundscape
 ```
 
-Only the duration, action idea, raw scene definition, and additional notes are sent as
-the user request. Images, audio, deterministic subject boilerplate, retention text,
-baseline ambience, and completed prompts are not sent to the provider.
+The exact `system_prompt` widget value is sent as the OpenAI-compatible `system`
+message and is saved normally in the workflow. It is not added to the user message and
+no hidden instructions are prepended or appended. The normal multiline widget can be
+converted to a connected STRING input through ComfyUI's widget-to-input action. Blank
+or whitespace-only values fail validation.
 
-The dedicated system prompt lives in
-`h3_character_ref_builder/enhancer_system_prompt.py`. Its separately declared
-`SYSTEM_PROMPT_VERSION` and full content participate in cache fingerprints, so prompt
-tuning invalidates stale enhancement results without changing node architecture.
+Only the duration, action idea, raw scene definition, and additional notes are sent as
+the JSON user message. Images, audio, deterministic subject boilerplate, retention
+text, baseline ambience, completed prompts, and the system prompt are not concatenated
+into that user message.
 
 ### Structured provider response
 
@@ -159,7 +177,8 @@ The enhancer first requests this strict JSON-schema shape:
 
 `additional_soundscape` may be an empty string. If a compatible provider rejects the
 strict `response_format` with HTTP 400/422, the client retries without that parameter
-while retaining the JSON-only system instruction. Plain JSON, provider `parsed` objects,
+while retaining the exact workflow-supplied system message. Plain JSON, provider
+`parsed` objects,
 and accidental fenced JSON blocks are accepted. Missing fields, wrong types, invalid
 JSON, or a detailed description without `[Shot 1]` produce an explicit node error.
 
@@ -243,7 +262,8 @@ Data remains beneath `folder_paths.get_user_directory()`:
 │   ├── profile.json
 │   ├── images/<media UUID>.<ext>
 │   └── audio/<media UUID>.<ext>
-└── scenes/<scene UUID>/scene.json
+├── scenes/<scene UUID>/scene.json
+└── prompt-enhancer-config.json
 ```
 
 Character schema V3, Scene schema V2, UUID behavior, media roles, upload validation,
