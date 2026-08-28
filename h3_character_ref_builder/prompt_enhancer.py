@@ -190,7 +190,9 @@ def _request_once(config: EnhancerConfig, payload: dict[str, Any]) -> dict[str, 
             + _redact(exc, config.api_key)
         ) from exc
     if len(raw) > MAX_RESPONSE_BYTES:
-        raise PromptEnhancerError("Prompt enhancer provider response was unexpectedly large.")
+        raise PromptEnhancerError(
+            "Prompt enhancer provider response was unexpectedly large."
+        )
     try:
         response_payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

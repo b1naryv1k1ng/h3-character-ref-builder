@@ -57,6 +57,39 @@ def _audio_definition(role: str) -> str:
     )
 
 
+def _scene_subject_definition(scene: dict[str, Any]) -> str:
+    definition = str(scene.get("definition", "")).strip()
+    if scene.get("reference_image") is not None:
+        result = (
+            "<Subject 2> is the environment defined by <Picture 3>. <Picture 3> "
+            "provides the established environment's spatial layout, architecture, "
+            "major objects, materials, lighting, and overall visual appearance. "
+            "Preserve the environment as one coherent location throughout the video."
+        )
+        if definition:
+            result += (
+                " The saved scene definition supplements the visual reference: "
+                + definition
+            )
+        return result
+    return f"<Subject 2> is {definition}"
+
+
+def _scene_retention(scene: dict[str, Any]) -> str:
+    if scene.get("reference_image") is not None:
+        return (
+            "<Subject 2> (appears throughout [Shot 1]): fully_preserved - preserve "
+            "the environment defined by <Picture 3>, including its established "
+            "geometry, layout, major objects, materials, lighting direction, and "
+            "defining visual characteristics throughout the video."
+        )
+    return (
+        "<Subject 2> (appears throughout [Shot 1]): fully_preserved - preserve the "
+        "environment's established geometry, layout, lighting direction, and "
+        "defining characteristics throughout the video."
+    )
+
+
 def build_character_context_data(
     *,
     character: dict[str, Any],
@@ -86,7 +119,7 @@ def build_character_context_data(
 
     subject_lines = [subject_1, _audio_definition(audio_role)]
     if scene is not None:
-        subject_lines.append(f"<Subject 2> is {str(scene['definition']).strip()}")
+        subject_lines.append(_scene_subject_definition(scene))
 
     scene_phrase = " in <Subject 2>" if scene is not None else ""
     summary = (
@@ -104,11 +137,7 @@ def build_character_context_data(
         )
     ]
     if scene is not None:
-        retention_lines.append(
-            "<Subject 2> (appears throughout [Shot 1]): fully_preserved - preserve the "
-            "environment's established geometry, layout, lighting direction, and "
-            "defining characteristics throughout the video."
-        )
+        retention_lines.append(_scene_retention(scene))
     audio_retention = AUDIO_ROLE_METADATA[audio_role]["retention"]
     retention_lines.append(
         f"<Audio 1>: reference - preserve {audio_retention} without copying the "
@@ -187,7 +216,7 @@ def combine_soundscape(default_soundscape: str, additional_soundscape: str) -> s
     baseline = default_soundscape.strip()
     additional = additional_soundscape.strip()
     if baseline and additional:
-        return f"{baseline}\n\nAdditional action-specific sounds: {additional}"
+        return f"{baseline} {additional}"
     if baseline:
         return baseline
     if additional:

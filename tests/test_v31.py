@@ -35,7 +35,9 @@ def test_full_body_identity_and_wardrobe_are_semantically_distinct():
     picture_2 = definitions.split("<Picture 2> contributes ", 1)[1].split(".", 1)[0]
     assert "body proportions, build, silhouette" in picture_2
     assert "wardrobe" not in picture_2
-    assert "source backgrounds, lighting, camera framing, pose, expression" in definitions
+    assert (
+        "source backgrounds, lighting, camera framing, pose, expression" in definitions
+    )
     assert "or wardrobe unless explicitly requested" in definitions
 
 
@@ -66,6 +68,7 @@ def test_scene_v1_migration_is_atomic_idempotent_and_preserves_definition(tmp_pa
         "name": "Legacy Room",
         "definition": original_definition,
         "default_soundscape": "",
+        "reference_image": None,
     }
     assert not list(scene_dir.glob(".scene-*.tmp"))
 
@@ -83,7 +86,9 @@ def test_scene_soundscape_crud_rename_and_uuid_stability(tmp_path):
     scene_id = created["id"]
     assert created["schema_version"] == SCENE_SCHEMA_VERSION
     assert created["default_soundscape"] == "gentle surf and light ocean wind"
-    assert store.get_scene(scene_id)["default_soundscape"] == created["default_soundscape"]
+    assert (
+        store.get_scene(scene_id)["default_soundscape"] == created["default_soundscape"]
+    )
 
     updated = store.update_scene(
         scene_id, default_soundscape="distant seabirds and subtle water movement"
@@ -140,10 +145,7 @@ def test_soundscape_combines_scene_default_and_additional_without_rewriting():
         scene={"definition": "a beach", "default_soundscape": scene_default},
         overall_soundscape=additional,
     )
-    assert section(prompt, "overall_soundscape") == (
-        f"{scene_default}\n\n"
-        f"Additional action-specific sounds: {additional}"
-    )
+    assert section(prompt, "overall_soundscape") == f"{scene_default} {additional}"
 
 
 def test_soundscape_uses_scene_default_only():

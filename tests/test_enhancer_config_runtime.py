@@ -30,9 +30,7 @@ def configured_store(tmp_path, monkeypatch):
         timeout_seconds=25,
     )
     store.set_api_key("first-secret")
-    monkeypatch.setattr(
-        enhancer, "get_default_provider_config_store", lambda: store
-    )
+    monkeypatch.setattr(enhancer, "get_default_provider_config_store", lambda: store)
     enhancer.clear_enhancement_cache()
     yield store
     enhancer.clear_enhancement_cache()

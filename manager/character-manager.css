@@ -68,6 +68,9 @@ input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow
 .audio-card .reference-metadata { margin:0; }
 .audio-card audio { width:100%; min-width:220px; }
 .scene-soundscape-field textarea { min-height:160px; line-height:1.5; }
+.scene-reference-preview { width:min(520px,100%); }
+.scene-reference-actions { width:min(520px,100%); display:flex; justify-content:flex-end; }
+.scene-reference-actions .button { min-width:110px; }
 .audio-card .audio-side { display:grid; gap:9px; }
 .audio-card .selection-controls,.audio-card .reference-actions { margin:0; }
 .button { border:1px solid var(--line); border-radius:7px; padding:9px 13px; color:var(--text); background:var(--panel-2); cursor:pointer; font-weight:650; font-size:13px; }

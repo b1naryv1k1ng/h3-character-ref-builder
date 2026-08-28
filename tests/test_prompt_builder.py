@@ -51,7 +51,8 @@ def test_prompt_has_exact_six_sections_in_order_and_common_role_wording():
     definitions = section(prompt, "subject_definitions")
     assert "facial identity, facial structure, eyes, hair" in definitions
     assert (
-        "full-body identity, body proportions, build, silhouette, skin tone" in definitions
+        "full-body identity, body proportions, build, silhouette, skin tone"
+        in definitions
     )
     assert "or wardrobe unless explicitly requested" in definitions
     assert "same character" in definitions

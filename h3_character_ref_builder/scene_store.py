@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -11,11 +12,17 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
-from .character_store import DATA_DIRECTORY
+from .character_store import (
+    DATA_DIRECTORY,
+    InvalidMediaId,
+    validate_media_id,
+)
+from .media import IMAGE_EXTENSIONS, extension_for_upload, validate_media_file
 
-SCENE_SCHEMA_VERSION = 2
+SCENE_SCHEMA_VERSION = 3
+V2_SCENE_SCHEMA_VERSION = 2
 LEGACY_SCENE_SCHEMA_VERSION = 1
 _SUBJECT_2_PREFIX = re.compile(r"^\s*<Subject\s+2>\s+is\s*", re.IGNORECASE)
 
@@ -33,6 +40,14 @@ class SceneNotFound(SceneStoreError):
 
 
 class SceneCorrupt(SceneStoreError):
+    pass
+
+
+class SceneImageNotFound(SceneStoreError):
+    pass
+
+
+class MissingSceneImage(SceneStoreError):
     pass
 
 
@@ -110,6 +125,40 @@ class SceneStore:
             normalize_default_soundscape(default_soundscape),
         )
 
+    @staticmethod
+    def _validate_reference_image(
+        record: Any, expected_id: str
+    ) -> dict[str, str] | None:
+        if record is None:
+            return None
+        if not isinstance(record, dict) or set(record) != {"id", "file"}:
+            raise SceneCorrupt(
+                f"Scene preset {expected_id} contains an invalid reference image."
+            )
+        try:
+            image_id = validate_media_id(record["id"])
+        except InvalidMediaId as exc:
+            raise SceneCorrupt(
+                f"Scene preset {expected_id} contains an invalid reference image id."
+            ) from exc
+        file_value = record["file"]
+        if not isinstance(file_value, str):
+            raise SceneCorrupt(
+                f"Scene preset {expected_id} contains an invalid image filename."
+            )
+        path = Path(file_value)
+        if (
+            path.is_absolute()
+            or len(path.parts) != 2
+            or path.parts[0] != "images"
+            or Path(path.parts[1]).stem != image_id
+            or Path(path.parts[1]).suffix.lower() not in IMAGE_EXTENSIONS
+        ):
+            raise SceneCorrupt(
+                f"Scene preset {expected_id} contains an unsafe image filename."
+            )
+        return {"id": image_id, "file": path.as_posix()}
+
     @classmethod
     def _validate_scene_data(cls, data: Any, expected_id: str) -> dict[str, Any]:
         if not isinstance(data, dict) or set(data) != {
@@ -118,6 +167,7 @@ class SceneStore:
             "name",
             "definition",
             "default_soundscape",
+            "reference_image",
         }:
             raise SceneCorrupt(f"Scene preset {expected_id} has invalid fields.")
         if data["schema_version"] != SCENE_SCHEMA_VERSION or data["id"] != expected_id:
@@ -128,12 +178,16 @@ class SceneStore:
             )
         except InvalidScene as exc:
             raise SceneCorrupt(f"Scene preset {expected_id} is invalid: {exc}") from exc
+        reference_image = cls._validate_reference_image(
+            data["reference_image"], expected_id
+        )
         return {
             "schema_version": SCENE_SCHEMA_VERSION,
             "id": expected_id,
             "name": name,
             "definition": definition,
             "default_soundscape": default_soundscape,
+            "reference_image": reference_image,
         }
 
     @staticmethod
@@ -175,6 +229,30 @@ class SceneStore:
             "name": data["name"],
             "definition": data["definition"],
             "default_soundscape": "",
+            "reference_image": None,
+        }
+        migrated = self._validate_scene_data(migrated, scene_id)
+        self._atomic_write(self._scene_path(scene_id), migrated)
+        return migrated
+
+    def _migrate_v2(self, scene_id: str, data: Any) -> dict[str, Any]:
+        if not isinstance(data, dict) or set(data) != {
+            "schema_version",
+            "id",
+            "name",
+            "definition",
+            "default_soundscape",
+        }:
+            raise SceneCorrupt(f"Scene preset {scene_id} has invalid V2 fields.")
+        if data["schema_version"] != V2_SCENE_SCHEMA_VERSION or data["id"] != scene_id:
+            raise SceneCorrupt(f"Scene preset {scene_id} has invalid V2 identity data.")
+        migrated = {
+            "schema_version": SCENE_SCHEMA_VERSION,
+            "id": scene_id,
+            "name": data["name"],
+            "definition": data["definition"],
+            "default_soundscape": data["default_soundscape"],
+            "reference_image": None,
         }
         migrated = self._validate_scene_data(migrated, scene_id)
         self._atomic_write(self._scene_path(scene_id), migrated)
@@ -195,6 +273,11 @@ class SceneStore:
             and data.get("schema_version") == LEGACY_SCENE_SCHEMA_VERSION
         ):
             data = self._migrate_v1(canonical, data)
+        elif (
+            isinstance(data, dict)
+            and data.get("schema_version") == V2_SCENE_SCHEMA_VERSION
+        ):
+            data = self._migrate_v2(canonical, data)
         return self._validate_scene_data(data, canonical)
 
     def _assert_unique_name(self, name: str, exclude_id: str | None = None) -> None:
@@ -225,6 +308,7 @@ class SceneStore:
                 "name": clean_name,
                 "definition": clean_definition,
                 "default_soundscape": clean_soundscape,
+                "reference_image": None,
             }
             try:
                 self._atomic_write(directory / "scene.json", scene)
@@ -275,6 +359,137 @@ class SceneStore:
             self._atomic_write(self._scene_path(canonical), scene)
             return copy.deepcopy(scene)
 
+    @staticmethod
+    def _reference_image_file_path(directory: Path, record: dict[str, str]) -> Path:
+        candidate = (directory / record["file"]).resolve()
+        expected_parent = (directory / "images").resolve()
+        if candidate.parent != expected_parent:
+            raise SceneCorrupt("Scene preset contains an unsafe reference image path.")
+        return candidate
+
+    def _stage_reference_image(
+        self,
+        directory: Path,
+        source: BinaryIO,
+        original_filename: str,
+        content_type: str | None,
+    ) -> tuple[Path, str]:
+        extension = extension_for_upload("image", original_filename, content_type)
+        images_directory = directory / "images"
+        images_directory.mkdir(parents=True, exist_ok=True)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=".upload-", suffix=".tmp", dir=images_directory
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                shutil.copyfileobj(source, handle, length=1024 * 1024)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary = Path(temporary_name)
+            validate_media_file("image", temporary, extension)
+            return temporary, extension
+        except Exception:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+    def set_reference_image(
+        self,
+        scene_id: str,
+        source: BinaryIO,
+        original_filename: str,
+        *,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        canonical = validate_scene_id(scene_id)
+        with self._lock:
+            scene = self._read_unlocked(canonical)
+            directory = self._scene_dir(canonical)
+            temporary, extension = self._stage_reference_image(
+                directory, source, original_filename, content_type
+            )
+            old_record = scene["reference_image"]
+            image_id = old_record["id"] if old_record is not None else str(uuid.uuid4())
+            relative = Path("images") / f"{image_id}{extension}"
+            destination = directory / relative
+            old_path = (
+                self._reference_image_file_path(directory, old_record)
+                if old_record is not None
+                else None
+            )
+            backup_path: Path | None = None
+            if destination.exists():
+                backup_path = destination.with_name(
+                    f".{destination.name}.{uuid.uuid4().hex}.backup"
+                )
+                os.replace(destination, backup_path)
+            try:
+                os.replace(temporary, destination)
+                scene["reference_image"] = {
+                    "id": image_id,
+                    "file": relative.as_posix(),
+                }
+                self._atomic_write(self._scene_path(canonical), scene)
+            except Exception:
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
+                try:
+                    destination.unlink()
+                except FileNotFoundError:
+                    pass
+                if backup_path is not None and backup_path.exists():
+                    os.replace(backup_path, destination)
+                raise
+            if backup_path is not None:
+                try:
+                    backup_path.unlink()
+                except FileNotFoundError:
+                    pass
+            if old_path is not None and old_path != destination:
+                try:
+                    old_path.unlink()
+                except FileNotFoundError:
+                    pass
+            return copy.deepcopy(scene)
+
+    def delete_reference_image(self, scene_id: str) -> dict[str, Any]:
+        canonical = validate_scene_id(scene_id)
+        with self._lock:
+            scene = self._read_unlocked(canonical)
+            record = scene["reference_image"]
+            if record is None:
+                raise SceneImageNotFound(
+                    f"Scene preset {canonical} has no reference image."
+                )
+            path = self._reference_image_file_path(self._scene_dir(canonical), record)
+            scene["reference_image"] = None
+            self._atomic_write(self._scene_path(canonical), scene)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            return copy.deepcopy(scene)
+
+    def reference_image_path(self, scene_id: str) -> Path:
+        canonical = validate_scene_id(scene_id)
+        with self._lock:
+            scene = self._read_unlocked(canonical)
+            record = scene["reference_image"]
+            if record is None:
+                raise SceneImageNotFound(
+                    f"Scene preset {canonical} has no reference image."
+                )
+            path = self._reference_image_file_path(self._scene_dir(canonical), record)
+            if not path.is_file():
+                raise MissingSceneImage(
+                    f'Scene preset "{scene["name"]}" reference image is missing.'
+                )
+            return path
+
     def delete_scene(self, scene_id: str) -> None:
         canonical = validate_scene_id(scene_id)
         with self._lock:
@@ -284,9 +499,28 @@ class SceneStore:
             shutil.rmtree(directory)
 
     def prompt_fingerprint(self, scene_id: str) -> str:
-        """Return prompt-relevant scene state, deliberately excluding its name."""
-        scene = self.get_scene(scene_id)
-        return f"{scene['id']}\0{scene['definition']}\0{scene['default_soundscape']}"
+        """Hash prompt/output-relevant scene text and managed image content."""
+        canonical = validate_scene_id(scene_id)
+        with self._lock:
+            scene = self._read_unlocked(canonical)
+            relevant = {
+                "schema_version": scene["schema_version"],
+                "id": scene["id"],
+                "definition": scene["definition"],
+                "default_soundscape": scene["default_soundscape"],
+                "reference_image": scene["reference_image"],
+            }
+            digest = hashlib.sha256(
+                json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            )
+            if scene["reference_image"] is not None:
+                path = self.reference_image_path(canonical)
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            return digest.hexdigest()
 
 
 _DEFAULT_STORES: dict[Path, SceneStore] = {}

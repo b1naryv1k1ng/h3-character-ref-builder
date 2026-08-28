@@ -29,7 +29,9 @@ from .scene_store import (
     DuplicateSceneName,
     InvalidScene,
     InvalidSceneId,
+    MissingSceneImage,
     SceneCorrupt,
+    SceneImageNotFound,
     SceneNotFound,
     get_default_scene_store,
 )
@@ -55,8 +57,27 @@ def _profile_response(profile: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _scene_response(scene: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(scene)
+    if result["reference_image"] is not None:
+        result["reference_image"]["url"] = (
+            f"{API_PREFIX}/scenes/{scene['id']}/reference-image"
+        )
+    return result
+
+
 def _error_status(error: Exception) -> int:
-    if isinstance(error, (ProfileNotFound, MediaNotFound, MissingMedia, SceneNotFound)):
+    if isinstance(
+        error,
+        (
+            ProfileNotFound,
+            MediaNotFound,
+            MissingMedia,
+            SceneNotFound,
+            SceneImageNotFound,
+            MissingSceneImage,
+        ),
+    ):
         return 404
     if isinstance(
         error, (DuplicateCharacterName, MediaLimitReached, DuplicateSceneName)
@@ -317,7 +338,7 @@ def register_routes() -> None:
     async def get_scene(request):
         try:
             scene = get_default_scene_store().get_scene(request.match_info["id"])
-            return web.json_response({"ok": True, "data": scene})
+            return web.json_response({"ok": True, "data": _scene_response(scene)})
         except Exception as error:
             return _error_json(web, error)
 
@@ -331,7 +352,9 @@ def register_routes() -> None:
                 payload.get("definition", ""),
                 payload.get("default_soundscape", ""),
             )
-            return web.json_response({"ok": True, "data": scene}, status=201)
+            return web.json_response(
+                {"ok": True, "data": _scene_response(scene)}, status=201
+            )
         except Exception as error:
             return _error_json(web, error)
 
@@ -346,7 +369,7 @@ def register_routes() -> None:
                 definition=payload.get("definition"),
                 default_soundscape=payload.get("default_soundscape"),
             )
-            return web.json_response({"ok": True, "data": scene})
+            return web.json_response({"ok": True, "data": _scene_response(scene)})
         except Exception as error:
             return _error_json(web, error)
 
@@ -354,6 +377,44 @@ def register_routes() -> None:
         try:
             get_default_scene_store().delete_scene(request.match_info["id"])
             return web.json_response({"ok": True, "data": None})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def set_scene_reference_image(request):
+        try:
+            fields, contents, filename, content_type = await _multipart_body(request)
+            if fields:
+                raise InvalidScene("Scene image upload accepts only the file field.")
+            if contents is None or not filename:
+                raise InvalidMedia("Multipart field 'file' is required.")
+            scene = get_default_scene_store().set_reference_image(
+                request.match_info["id"],
+                io.BytesIO(contents),
+                filename,
+                content_type=content_type,
+            )
+            return web.json_response({"ok": True, "data": _scene_response(scene)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def delete_scene_reference_image(request):
+        try:
+            scene = get_default_scene_store().delete_reference_image(
+                request.match_info["id"]
+            )
+            return web.json_response({"ok": True, "data": _scene_response(scene)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def serve_scene_reference_image(request):
+        try:
+            path = get_default_scene_store().reference_image_path(
+                request.match_info["id"]
+            )
+            response = web.FileResponse(path)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
         except Exception as error:
             return _error_json(web, error)
 
@@ -390,9 +451,7 @@ def register_routes() -> None:
                 raise InvalidProviderConfig(
                     "API key update must contain exactly api_key."
                 )
-            status = get_default_provider_config_store().set_api_key(
-                payload["api_key"]
-            )
+            status = get_default_provider_config_store().set_api_key(payload["api_key"])
             return web.json_response({"ok": True, "data": status})
         except Exception as error:
             return _error_json(web, error)
@@ -438,6 +497,15 @@ def register_routes() -> None:
     routes.post(f"{API_PREFIX}/scenes")(create_scene)
     routes.put(f"{API_PREFIX}/scenes/{{id}}")(update_scene)
     routes.delete(f"{API_PREFIX}/scenes/{{id}}")(delete_scene)
+    routes.post(f"{API_PREFIX}/scenes/{{id}}/reference-image")(
+        set_scene_reference_image
+    )
+    routes.delete(f"{API_PREFIX}/scenes/{{id}}/reference-image")(
+        delete_scene_reference_image
+    )
+    routes.get(f"{API_PREFIX}/scenes/{{id}}/reference-image")(
+        serve_scene_reference_image
+    )
     routes.get(f"{API_PREFIX}/prompt-enhancer/config")(get_prompt_enhancer_config)
     routes.put(f"{API_PREFIX}/prompt-enhancer/config")(update_prompt_enhancer_config)
     routes.put(f"{API_PREFIX}/prompt-enhancer/api-key")(set_prompt_enhancer_api_key)

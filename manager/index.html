@@ -87,6 +87,20 @@
               <textarea id="scene-definition" maxlength="50000" rows="16" placeholder="a quiet tropical beach in warm late-afternoon sunlight..."></textarea>
             </label>
             <p class="field-help">Store only the environment definition. A pasted “&lt;Subject 2&gt; is” prefix is removed on save.</p>
+            <section class="library-section scene-reference-section" aria-labelledby="scene-reference-heading">
+              <div class="library-heading">
+                <div><h3 id="scene-reference-heading">Reference Image</h3></div>
+                <button id="scene-upload-image" class="button secondary" type="button">Upload</button>
+              </div>
+              <div id="scene-reference-preview" class="reference-preview scene-reference-preview" hidden>
+                <img id="scene-reference-image" alt="Scene reference" />
+              </div>
+              <p id="scene-reference-empty" class="library-empty">No scene reference image. Save the Scene Preset, then upload an optional environment reference.</p>
+              <div id="scene-reference-actions" class="scene-reference-actions" hidden>
+                <button id="scene-remove-image" class="button danger compact" type="button">Remove</button>
+              </div>
+              <input id="scene-image-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+            </section>
             <label class="field scene-soundscape-field">
               <span>Default Soundscape <small>baseline ambience normally inherent to this environment</small></span>
               <textarea id="scene-default-soundscape" maxlength="50000" rows="7" placeholder="Normal environmental ambience for this location..."></textarea>

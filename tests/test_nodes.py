@@ -27,7 +27,7 @@ def test_node_resolves_defaults_by_media_uuid_not_array_index(store, monkeypatch
     monkeypatch.setattr(node_module, "load_image", lambda path: path.name)
     monkeypatch.setattr(node_module, "load_audio", lambda path: path.name)
 
-    image_1, image_2, selected_audio, context_json = (
+    image_1, image_2, selected_audio, context_json, scene_image = (
         H3CharacterReference().load_character(profile["id"])
     )
     context = json.loads(context_json)
@@ -44,15 +44,23 @@ def test_node_resolves_defaults_by_media_uuid_not_array_index(store, monkeypatch
     assert context["default_soundscape"] == ""
     assert "file" not in context_json
     assert "images/" not in context_json
+    assert scene_image is None
 
 
 def test_node_output_contract_preserves_media_positions_and_returns_context():
-    assert H3CharacterReference.RETURN_TYPES == ("IMAGE", "IMAGE", "AUDIO", "STRING")
+    assert H3CharacterReference.RETURN_TYPES == (
+        "IMAGE",
+        "IMAGE",
+        "AUDIO",
+        "STRING",
+        "IMAGE",
+    )
     assert H3CharacterReference.RETURN_NAMES == (
-        "image_1",
-        "image_2",
+        "character_image_1",
+        "character_image_2",
         "audio",
         "character_context",
+        "scene_image",
     )
 
 
@@ -80,10 +88,14 @@ def test_node_scene_context_and_fingerprint_isolate_other_scene(
     assert context["default_soundscape"] == "quiet waves"
 
     scenes.update_scene(other_scene["id"], definition="changed unrelated scene")
-    assert H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"]) == before
+    assert (
+        H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"]) == before
+    )
 
     scenes.update_scene(selected_scene["id"], name="Renamed Beach")
-    assert H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"]) == before
+    assert (
+        H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"]) == before
+    )
     scenes.update_scene(selected_scene["id"], definition="a stormy shoreline")
     changed = H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"])
     assert changed != before
@@ -105,9 +117,7 @@ def test_legacy_prompt_values_are_accepted_but_do_not_affect_context_fingerprint
     )
 
 
-def test_context_without_scene_omits_subject_2_and_scene_fields(
-    store, monkeypatch
-):
+def test_context_without_scene_omits_subject_2_and_scene_fields(store, monkeypatch):
     profile, _, _ = complete_profile(store)
     monkeypatch.setattr(node_module, "get_default_store", lambda: store)
     monkeypatch.setattr(node_module, "load_image", lambda path: path.name)

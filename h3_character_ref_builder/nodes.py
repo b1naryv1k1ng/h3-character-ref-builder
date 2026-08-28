@@ -59,14 +59,24 @@ class H3CharacterReference:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "IMAGE", "AUDIO", "STRING")
-    RETURN_NAMES = ("image_1", "image_2", "audio", "character_context")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "AUDIO", "STRING", "IMAGE")
+    RETURN_NAMES = (
+        "character_image_1",
+        "character_image_2",
+        "audio",
+        "character_context",
+        "scene_image",
+    )
     FUNCTION = "load_character"
     CATEGORY = "H3/Reference"
-    DESCRIPTION = "Loads active references and builds deterministic H3 character context."
+    DESCRIPTION = (
+        "Loads active references and builds deterministic H3 character context."
+    )
 
     @classmethod
-    def VALIDATE_INPUTS(cls, character, scene=NO_SCENE, *legacy_values, **legacy_inputs):
+    def VALIDATE_INPUTS(
+        cls, character, scene=NO_SCENE, *legacy_values, **legacy_inputs
+    ):
         del legacy_values, legacy_inputs
         if not character:
             return "No character selected. Create a profile in H3 Reference Manager."
@@ -95,7 +105,9 @@ class H3CharacterReference:
             json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
-    def load_character(self, character, scene=NO_SCENE, *legacy_values, **legacy_inputs):
+    def load_character(
+        self, character, scene=NO_SCENE, *legacy_values, **legacy_inputs
+    ):
         del legacy_values, legacy_inputs
         if not character:
             raise ValueError(
@@ -103,8 +115,12 @@ class H3CharacterReference:
             )
         selected = get_default_store().resolve_selected_references(character)
         scene_data = None
+        scene_image = None
         if scene != NO_SCENE:
-            scene_data = get_default_scene_store().get_scene(scene)
+            scene_store = get_default_scene_store()
+            scene_data = scene_store.get_scene(scene)
+            if scene_data["reference_image"] is not None:
+                scene_image = load_image(scene_store.reference_image_path(scene))
         character_context = build_character_context(
             character=selected["profile"],
             image_1=selected["records"]["image_1"],
@@ -117,6 +133,7 @@ class H3CharacterReference:
             load_image(selected["paths"]["image_2"]),
             load_audio(selected["paths"]["audio"]),
             character_context,
+            scene_image,
         )
 
 

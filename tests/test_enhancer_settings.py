@@ -81,7 +81,7 @@ def test_saved_values_override_environment_and_status_never_returns_key(
     serialized_status = json.dumps(store.status())
     assert "saved-secret" not in serialized_status
     assert "environment-secret" not in serialized_status
-    assert "api_key\"" not in serialized_status
+    assert 'api_key"' not in serialized_status
     assert store.status() == {
         "base_url": "https://saved.example/v1",
         "model": "saved-model",
@@ -243,7 +243,7 @@ def test_configuration_routes_are_write_only_for_api_key(tmp_path, monkeypatch):
             )
             status_text = await status.text()
             assert "replacement-secret" not in status_text
-            assert "api_key\"" not in status_text
+            assert 'api_key"' not in status_text
 
             cleared = await client.delete(
                 "/api/h3-character-ref-builder/prompt-enhancer/api-key"

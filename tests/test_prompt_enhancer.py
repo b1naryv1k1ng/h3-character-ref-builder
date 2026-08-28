@@ -82,7 +82,9 @@ def test_parse_character_context_accepts_v1_and_rejects_invalid_json_and_version
 
     with pytest.raises(ValueError, match="Invalid character_context JSON"):
         parse_character_context("not json")
-    with pytest.raises(ValueError, match="Unsupported character_context schema_version"):
+    with pytest.raises(
+        ValueError, match="Unsupported character_context schema_version"
+    ):
         parse_character_context(context_json(schema_version=2))
 
 
@@ -92,9 +94,9 @@ def test_parse_character_context_accepts_v1_and_rejects_invalid_json_and_version
         (
             "baseline ambience",
             "footsteps",
-            "baseline ambience\n\nAdditional action-specific sounds: footsteps",
+            "baseline ambience footsteps",
         ),
-        ("baseline ambience", "", "baseline ambience"),
+        ("  baseline ambience  ", " \n\t ", "baseline ambience"),
         ("", "footsteps", "footsteps"),
         ("", "", DEFAULT_SOUNDSCAPE),
     ],
@@ -114,17 +116,21 @@ def test_final_prompt_has_exact_order_and_soundscape_variants(
         for line in prompt.splitlines()
         if line.endswith(":") and line.removesuffix(":") in SECTION_NAMES
     ] == SECTION_NAMES
-    assert section(prompt, "subject_definitions") == character_context()[
-        "subject_definitions"
-    ]
+    assert (
+        section(prompt, "subject_definitions")
+        == character_context()["subject_definitions"]
+    )
     assert section(prompt, "summary") == character_context()["summary"]
-    assert section(prompt, "retention_analysis") == character_context()[
-        "retention_analysis"
-    ]
+    assert (
+        section(prompt, "retention_analysis")
+        == character_context()["retention_analysis"]
+    )
     assert section(prompt, "detailed_description") == (
         "[Shot 1] [0-5s] She walks forward."
     )
     assert section(prompt, "overall_soundscape") == expected
+    assert prompt.count("overall_soundscape:") == 1
+    assert "Additional action-specific sounds:" not in prompt
     assert section(prompt, "non_diegetic_music") == "N/A"
 
 
@@ -134,9 +140,10 @@ def test_structured_content_parses_plain_json_fences_and_provider_parsed_object(
         "additional_soundscape": "Shoes pivot softly.",
     }
     assert enhancer.parse_enhancement_content(json.dumps(expected)) == expected
-    assert enhancer.parse_enhancement_content(
-        "```json\n" + json.dumps(expected) + "\n```"
-    ) == expected
+    assert (
+        enhancer.parse_enhancement_content("```json\n" + json.dumps(expected) + "\n```")
+        == expected
+    )
     assert enhancer.parse_enhancement_content(expected) == expected
 
 
@@ -345,9 +352,7 @@ def test_missing_api_key_and_error_text_never_expose_key(monkeypatch):
     def fake_open(request, timeout):
         del timeout
         body = json.dumps({"error": {"message": f"bad credential {secret}"}}).encode()
-        raise HTTPError(
-            request.full_url, 418, "failure", {}, io.BytesIO(body)
-        )
+        raise HTTPError(request.full_url, 418, "failure", {}, io.BytesIO(body))
 
     monkeypatch.setattr(enhancer, "urlopen", fake_open)
     with pytest.raises(enhancer.PromptEnhancerError) as error:
@@ -375,9 +380,7 @@ def test_paid_call_cache_reuses_same_inputs_and_music_or_baseline_changes(monkey
 
     monkeypatch.setattr(enhancer, "_request_enhancement", fake_request)
     node = H3PromptEnhancer()
-    first = node.enhance_prompt(
-        context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
-    )
+    first = node.enhance_prompt(context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A")
     second = node.enhance_prompt(
         context_json(), 15, SYSTEM_PROMPT, "walk", "", "soft piano"
     )
@@ -393,6 +396,8 @@ def test_paid_call_cache_reuses_same_inputs_and_music_or_baseline_changes(monkey
     assert len(calls) == 1
     assert "default_soundscape" not in calls[0]
     assert first[1:] == second[1:] == changed_baseline[1:]
+    assert first[2] == "Measured footsteps."
+    assert section(first[0], "overall_soundscape").endswith("Measured footsteps.")
     assert section(first[0], "non_diegetic_music") == "N/A"
     assert section(second[0], "non_diegetic_music") == "soft piano"
     assert section(changed_baseline[0], "overall_soundscape").startswith(
@@ -456,19 +461,32 @@ def test_comfy_fingerprint_tracks_final_inputs_but_never_api_key(monkeypatch):
     base = H3PromptEnhancer.IS_CHANGED(
         context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
     )
-    assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, SYSTEM_PROMPT, "walk", "", "music"
-    ) != base
-    assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 20, SYSTEM_PROMPT, "walk", "", "N/A"
-    ) != base
-    assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, SYSTEM_PROMPT, "run", "", "N/A"
-    ) != base
-    assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, "changed system", "walk", "", "N/A"
-    ) != base
+    assert (
+        H3PromptEnhancer.IS_CHANGED(
+            context_json(), 15, SYSTEM_PROMPT, "walk", "", "music"
+        )
+        != base
+    )
+    assert (
+        H3PromptEnhancer.IS_CHANGED(
+            context_json(), 20, SYSTEM_PROMPT, "walk", "", "N/A"
+        )
+        != base
+    )
+    assert (
+        H3PromptEnhancer.IS_CHANGED(context_json(), 15, SYSTEM_PROMPT, "run", "", "N/A")
+        != base
+    )
+    assert (
+        H3PromptEnhancer.IS_CHANGED(
+            context_json(), 15, "changed system", "walk", "", "N/A"
+        )
+        != base
+    )
     monkeypatch.setenv(enhancer.API_KEY_ENV, "a-different-secret")
-    assert H3PromptEnhancer.IS_CHANGED(
-        context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
-    ) == base
+    assert (
+        H3PromptEnhancer.IS_CHANGED(
+            context_json(), 15, SYSTEM_PROMPT, "walk", "", "N/A"
+        )
+        == base
+    )

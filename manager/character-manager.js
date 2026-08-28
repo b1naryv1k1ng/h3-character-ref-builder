@@ -27,6 +27,8 @@ const elements = Object.fromEntries([
   "audio-count", "images-empty", "audio-empty", "image-limit-note", "audio-limit-note",
   "add-image", "add-audio", "media-file", "delete-character", "character-dirty",
   "scene-form", "scene-title", "scene-id", "scene-name", "scene-definition", "scene-default-soundscape", "delete-scene",
+  "scene-upload-image", "scene-remove-image", "scene-image-file", "scene-reference-preview",
+  "scene-reference-image", "scene-reference-empty", "scene-reference-actions",
   "scene-dirty", "confirm-dialog", "confirm-title", "confirm-message",
 ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]));
 
@@ -67,6 +69,7 @@ function setDirty(value = true) {
 
 function updateControls() {
   const characterSaved = Boolean(state.character?.id);
+  const sceneSaved = Boolean(state.scene?.id);
   const imageLimit = (state.character?.images?.length || 0) >= IMAGE_LIMIT;
   const audioLimit = (state.character?.audio?.length || 0) >= AUDIO_LIMIT;
   elements.new_item.disabled = state.busy;
@@ -75,6 +78,8 @@ function updateControls() {
   for (const control of document.querySelectorAll("input, textarea, select, .editor button")) control.disabled = state.busy;
   elements.add_image.disabled = state.busy || !characterSaved || imageLimit;
   elements.add_audio.disabled = state.busy || !characterSaved || audioLimit;
+  elements.scene_upload_image.disabled = state.busy || !sceneSaved;
+  elements.scene_remove_image.disabled = state.busy || !sceneSaved || !state.scene?.reference_image;
 }
 
 function setBusy(value) { state.busy = value; updateControls(); }
@@ -215,6 +220,23 @@ function renderLibraries() {
   elements.readiness.classList.toggle("incomplete", missing.length > 0); updateControls();
 }
 
+function renderSceneReference() {
+  const reference = state.scene?.reference_image;
+  elements.scene_reference_preview.hidden = !reference;
+  elements.scene_reference_empty.hidden = Boolean(reference);
+  elements.scene_reference_actions.hidden = !reference;
+  elements.scene_reference_empty.textContent = state.scene?.id
+    ? "No scene reference image. Upload an optional environment reference."
+    : "No scene reference image. Save the Scene Preset, then upload an optional environment reference.";
+  elements.scene_upload_image.textContent = reference ? "Replace" : "Upload";
+  if (reference) {
+    elements.scene_reference_image.src = `${fileUrl(reference.url)}?v=${Date.now()}`;
+  } else {
+    elements.scene_reference_image.removeAttribute("src");
+  }
+  updateControls();
+}
+
 function showCharacter(profile) {
   state.character = clone(profile); state.characterOriginal = clone(profile); state.scene = null; state.sceneOriginal = null;
   elements.editor_empty.hidden = true; elements.scene_form.hidden = true; elements.character_form.hidden = false;
@@ -230,7 +252,7 @@ function showScene(scene) {
   elements.scene_name.value = scene.name || ""; elements.scene_definition.value = scene.definition || ""; elements.scene_default_soundscape.value = scene.default_soundscape || "";
   elements.scene_title.textContent = scene.id ? scene.name : "New Scene Preset";
   elements.scene_id.textContent = scene.id ? `UUID ${scene.id}` : "UUID assigned on save";
-  elements.delete_scene.hidden = !scene.id; setDirty(false); renderList(); updateControls(); elements.scene_name.focus();
+  elements.delete_scene.hidden = !scene.id; setDirty(false); renderList(); renderSceneReference(); elements.scene_name.focus();
 }
 
 async function refreshCatalogs() {
@@ -262,7 +284,7 @@ async function switchTab(tab) {
 async function newItem() {
   if (state.busy || !(await mayDiscard())) return; showStatus("");
   if (state.tab === "characters") showCharacter({ schema_version: 3, id: null, name: "", description: "", images: [], audio: [], defaults: { image_1: null, image_2: null, audio: null }, generation_ready: false });
-  else showScene({ schema_version: 2, id: null, name: "", definition: "", default_soundscape: "" });
+  else showScene({ schema_version: 3, id: null, name: "", definition: "", default_soundscape: "", reference_image: null });
 }
 
 function validateUniqueName(value, catalog, currentId, label) {
@@ -296,14 +318,49 @@ async function saveCharacter(event) {
   catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
 }
 
+async function persistScene() {
+  const name = validateUniqueName(elements.scene_name.value, state.scenes, state.scene?.id, "Scene Preset");
+  const body = JSON.stringify({ name, definition: elements.scene_definition.value, default_soundscape: elements.scene_default_soundscape.value });
+  const scene = await request(state.scene.id ? `/scenes/${encodeURIComponent(state.scene.id)}` : "/scenes", { method: state.scene.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body });
+  showScene(scene); await refreshCatalogs(); return scene;
+}
+
 async function saveScene(event) {
   event.preventDefault(); if (state.busy) return;
   try {
     setBusy(true); showStatus("Saving Scene Preset…");
-    const name = validateUniqueName(elements.scene_name.value, state.scenes, state.scene?.id, "Scene Preset");
-    const body = JSON.stringify({ name, definition: elements.scene_definition.value, default_soundscape: elements.scene_default_soundscape.value });
-    const scene = await request(state.scene.id ? `/scenes/${encodeURIComponent(state.scene.id)}` : "/scenes", { method: state.scene.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body });
-    showScene(scene); await refreshCatalogs(); showStatus(`Saved ${scene.name}.`, "success");
+    const scene = await persistScene(); showStatus(`Saved ${scene.name}.`, "success");
+  } catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
+}
+
+async function savePendingScene() { if (state.dirty) await persistScene(); }
+
+function beginSceneImageUpload() {
+  if (!state.scene?.id || state.busy) return;
+  elements.scene_image_file.value = "";
+  elements.scene_image_file.click();
+}
+
+async function handleSceneImageFile(file) {
+  if (!file || !state.scene?.id || state.busy) return;
+  const replacing = Boolean(state.scene.reference_image);
+  try {
+    setBusy(true); await savePendingScene();
+    const form = new FormData(); form.append("file", file, file.name);
+    const scene = await request(`/scenes/${encodeURIComponent(state.scene.id)}/reference-image`, { method: "POST", body: form });
+    showScene(scene); await refreshCatalogs();
+    showStatus(replacing ? "Scene reference image replaced." : "Scene reference image uploaded.", "success");
+  } catch (error) { showStatus(error.message, "error"); }
+  finally { elements.scene_image_file.value = ""; setBusy(false); }
+}
+
+async function removeSceneImage() {
+  if (!state.scene?.reference_image || state.busy) return;
+  if (!(await askConfirm("Remove scene reference image?", "This permanently removes the managed image. The Scene Preset will remain available as text-only."))) return;
+  try {
+    setBusy(true); await savePendingScene();
+    const scene = await request(`/scenes/${encodeURIComponent(state.scene.id)}/reference-image`, { method: "DELETE" });
+    showScene(scene); await refreshCatalogs(); showStatus("Scene reference image removed.", "success");
   } catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
 }
 
@@ -391,6 +448,9 @@ elements.characters_tab.addEventListener("click", () => switchTab("characters"))
 elements.new_item.addEventListener("click", newItem); elements.character_form.addEventListener("submit", saveCharacter); elements.scene_form.addEventListener("submit", saveScene);
 elements.delete_character.addEventListener("click", deleteCurrent); elements.delete_scene.addEventListener("click", deleteCurrent);
 elements.add_image.addEventListener("click", () => beginAdd("image")); elements.add_audio.addEventListener("click", () => beginAdd("audio")); elements.media_file.addEventListener("change", () => handleMediaFile(elements.media_file.files[0]));
+elements.scene_upload_image.addEventListener("click", beginSceneImageUpload);
+elements.scene_remove_image.addEventListener("click", removeSceneImage);
+elements.scene_image_file.addEventListener("change", () => handleSceneImageFile(elements.scene_image_file.files[0]));
 configureDropTarget(elements.image_library.closest(".library-section"), "image");
 configureDropTarget(elements.audio_library.closest(".library-section"), "audio");
 window.addEventListener("beforeunload", (event) => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });

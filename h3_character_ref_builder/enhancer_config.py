@@ -85,9 +85,7 @@ def _normalize_timeout(value: object) -> int:
         try:
             value = int(raw)
         except ValueError as exc:
-            raise InvalidProviderConfig(
-                "Request Timeout must be an integer."
-            ) from exc
+            raise InvalidProviderConfig("Request Timeout must be an integer.") from exc
     if not isinstance(value, int):
         raise InvalidProviderConfig("Request Timeout must be an integer.")
     if not MIN_TIMEOUT_SECONDS <= value <= MAX_TIMEOUT_SECONDS:
@@ -136,9 +134,7 @@ class ProviderConfigStore:
             if "model" in data:
                 result["model"] = _normalize_model(data["model"])
             if "timeout_seconds" in data:
-                result["timeout_seconds"] = _normalize_timeout(
-                    data["timeout_seconds"]
-                )
+                result["timeout_seconds"] = _normalize_timeout(data["timeout_seconds"])
             if "api_key" in data:
                 key = data["api_key"]
                 if not isinstance(key, str) or not key.strip():

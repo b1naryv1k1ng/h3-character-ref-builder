@@ -22,12 +22,12 @@ storage remain local and deterministic.
 - Immutable character, media, and scene UUIDs
 - Two active image defaults and one active audio default per generation
 - Semantic image/audio roles for deterministic subject and retention text
-- Independent Scene Presets with definitions and baseline soundscapes
+- Independent Scene Presets with definitions, baseline soundscapes, and one optional managed reference image
 - Human-inspectable, versioned `character_context` JSON with no media paths or bytes
 - Provider-agnostic OpenAI-compatible chat-completions client
 - Strict structured-output request with a JSON-only compatibility fallback
 - Bounded in-process enhancement cache that avoids unnecessary paid API calls
-- Automatic safe migration from V1/V2 character profiles and V1 Scene Presets
+- Automatic safe migration from V1/V2 character profiles and V1/V2 Scene Presets
 
 ## Installation
 
@@ -78,9 +78,10 @@ key into a workflow, node widget, Scene Preset, or Character Manager field.
 2. Create/select a character, maintain its references, and select two active images plus
    one active audio reference.
 3. Optionally create and select a Scene Preset with a raw environment definition and
-   baseline soundscape.
+   baseline soundscape. A Scene Preset can also hold one optional environment image.
 4. Add **H3 Character Reference** from **H3 → Reference**.
-5. Connect its `image_1`, `image_2`, and `audio` outputs to the H3 reference inputs.
+5. Connect `character_image_1`, `character_image_2`, and `audio` to the H3 reference
+   inputs. When present, connect `scene_image` as the `<Picture 3>` environment input.
 6. Add **H3 Prompt Enhancer** from **H3 → Prompt**.
 7. Connect `character_context` from the first node to the enhancer.
 8. Enter a duration, editable System Prompt, rough Action Idea, optional Additional
@@ -102,14 +103,17 @@ Scene Preset  selected scene UUID or (No Scene Preset)
 Outputs:
 
 ```text
-IMAGE   image_1
-IMAGE   image_2
-AUDIO   audio
-STRING  character_context
+1  IMAGE   character_image_1
+2  IMAGE   character_image_2
+3  AUDIO   audio
+4  STRING  character_context
+5  IMAGE   scene_image
 ```
 
-The first three output positions and media-loading behavior are unchanged. The fourth
-output is no longer a finished prompt.
+The original first four slot positions remain unchanged for saved-workflow compatibility;
+only the first two visible names changed. `scene_image` is appended in slot 5 and is the
+optional `<Picture 3>` environment reference. When the selected scene is text-only (or
+no scene is selected), this output is `None`; no synthetic placeholder image is created.
 
 ### Character context schema V1
 
@@ -128,6 +132,11 @@ The first three fields preserve the deterministic V3.1 wording. `scene_definitio
 the raw selected Scene Preset definition body and `default_soundscape` is its baseline
 ambience. With no scene, both fields are empty and `<Subject 2>` is omitted from all
 deterministic sections.
+
+For a visual Scene Preset, deterministic context defines `<Subject 2>` from `<Picture 3>`
+and treats the saved scene definition as supplemental detail. Text-only Scene Presets
+retain the existing `<Subject 2> is {scene definition}` behavior. The scene image is sent
+to H3 through `scene_image`; it is never sent to the prompt-enhancement provider.
 
 The context contains no image bytes, audio bytes, file paths, media labels, character
 names, or other storage details.
@@ -203,15 +212,14 @@ non_diegetic_music:
 The first three are copied from `character_context`; the LLM cannot rewrite them.
 `detailed_description` comes from the structured LLM response.
 
-When baseline ambience and action-specific sounds both exist, assembly is explicit:
+When baseline ambience and action-specific sounds both exist, they are joined with
+normal whitespace inside the sole soundscape section:
 
 ```text
-<Scene Preset baseline soundscape>
-
-Additional action-specific sounds: <LLM-generated sounds>
+<Scene Preset baseline soundscape> <LLM-generated sounds>
 ```
 
-If only one exists, it is used without an empty label. If neither exists, the original
+If only one exists, it is used without extra formatting. If neither exists, the original
 fallback remains:
 
 ```text
@@ -223,8 +231,9 @@ Music is copied from the widget and falls back to `N/A` when blank.
 ## Cache behavior
 
 **H3 Character Reference** fingerprints only the selected character/reference state and
-selected Scene Preset definition/soundscape. Unused references, unrelated characters,
-unrelated scenes, character names, scene names, and media labels do not invalidate it.
+selected Scene Preset definition, soundscape, and managed reference-image content. Adding,
+replacing, or removing the selected scene image invalidates this node. Unused references,
+unrelated characters/scenes, character names, scene names, and media labels do not.
 
 **H3 Prompt Enhancer** uses two cache layers:
 
@@ -241,7 +250,8 @@ excluded from workflow data, fingerprints, logs, and errors.
 
 ## Existing workflow migration
 
-The `H3CharacterReference` node type and its first three output positions are retained.
+The `H3CharacterReference` node type and all four prior output positions are retained;
+the optional scene image was appended as output 5.
 Its Python execution methods accept and ignore legacy prompt-authoring arguments where
 ComfyUI supplies them by name or position. The three obsolete widgets are no longer
 declared for new nodes.
@@ -262,14 +272,18 @@ Data remains beneath `folder_paths.get_user_directory()`:
 │   ├── profile.json
 │   ├── images/<media UUID>.<ext>
 │   └── audio/<media UUID>.<ext>
-├── scenes/<scene UUID>/scene.json
+├── scenes/<scene UUID>/
+│   ├── scene.json
+│   └── images/<scene-image UUID>.<ext>  (optional)
 └── prompt-enhancer-config.json
 ```
 
-Character schema V3, Scene schema V2, UUID behavior, media roles, upload validation,
-atomic writes, migrations, and Character Manager APIs are unchanged. Supported images
-remain PNG, JPEG/JPG, and WebP; supported audio remains WAV, MP3, FLAC, M4A, OGG, and
-AAC according to ComfyUI's PyAV/FFmpeg stack.
+Scene schema V3 adds nullable `reference_image` metadata. Existing V1/V2 scenes migrate
+atomically and idempotently with `reference_image: null`; names, definitions, and default
+soundscapes are preserved. Uploaded files receive UUID-backed managed filenames, use the
+same validation as character images, and are cleaned up on replacement, removal, or scene
+deletion. Supported images remain PNG, JPEG/JPG, and WebP; supported audio remains WAV,
+MP3, FLAC, M4A, OGG, and AAC according to ComfyUI's PyAV/FFmpeg stack.
 
 ## Tests
 
