@@ -19,6 +19,7 @@
       <nav class="tabs" aria-label="Reference libraries">
         <button id="characters-tab" class="tab active" type="button" aria-selected="true">Characters</button>
         <button id="scenes-tab" class="tab" type="button" aria-selected="false">Scene Presets</button>
+        <button id="props-tab" class="tab" type="button" aria-selected="false">Prop References</button>
       </nav>
 
       <div id="status" class="status" role="status" aria-live="polite" hidden></div>
@@ -108,6 +109,37 @@
             <div class="editor-actions">
               <button id="delete-scene" class="button danger" type="button">Delete Scene</button>
               <div class="right-actions"><span id="scene-dirty" class="dirty-note" hidden>Unsaved changes</span><button class="button primary" type="submit">Save Scene</button></div>
+            </div>
+          </form>
+
+          <form id="prop-form" hidden>
+            <div class="editor-title-row">
+              <div><span class="eyebrow">Prop Editor</span><h2 id="prop-title">New Prop Reference</h2></div>
+              <span id="prop-id" class="character-id"></span>
+            </div>
+            <div id="prop-readiness" class="readiness incomplete" role="status"></div>
+            <label class="field">
+              <span>Name <strong aria-hidden="true">*</strong> <small>the object or anatomical feature this image represents</small></span>
+              <input id="prop-name" maxlength="200" autocomplete="off" required />
+            </label>
+            <label class="field">
+              <span>Description <small>optional supplementary visual details</small></span>
+              <textarea id="prop-description" maxlength="20000" rows="6"></textarea>
+            </label>
+            <section class="library-section" aria-labelledby="prop-reference-heading">
+              <div class="library-heading">
+                <div><h3 id="prop-reference-heading">Reference Image</h3></div>
+                <button id="prop-upload-image" class="button secondary" type="button">Upload</button>
+              </div>
+              <div id="prop-reference-preview" class="reference-preview scene-reference-preview" hidden>
+                <img id="prop-reference-image" alt="Prop reference" />
+              </div>
+              <p id="prop-reference-empty" class="library-empty">Save the Prop Reference, then upload its required image.</p>
+              <input id="prop-image-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+            </section>
+            <div class="editor-actions">
+              <button id="delete-prop" class="button danger" type="button">Delete Prop</button>
+              <div class="right-actions"><span id="prop-dirty" class="dirty-note" hidden>Unsaved changes</span><button class="button primary" type="submit">Save Prop</button></div>
             </div>
           </form>
         </section>

@@ -90,6 +90,32 @@ def _scene_retention(scene: dict[str, Any]) -> str:
     )
 
 
+def _prop_subject_definition(prop: dict[str, Any], picture_number: int) -> str:
+    name = str(prop["name"]).strip()
+    picture = f"<Picture {picture_number}>"
+    result = (
+        f"{picture} provides the visual reference for the {name} appearing in the "
+        f"video. Whenever the {name} is visible, preserve its shape, proportions, "
+        f"color, surface appearance, and distinctive visual details from {picture}. "
+        f"{picture} defines the {name} only; do not retain its source background, "
+        "lighting, camera framing, surrounding body, hands, pose, or unrelated content."
+    )
+    description = str(prop.get("description", "")).strip()
+    if description:
+        result += f" Additional prop information: {description}"
+    return result
+
+
+def _prop_retention(prop: dict[str, Any], picture_number: int) -> str:
+    name = str(prop["name"]).strip()
+    picture = f"<Picture {picture_number}>"
+    return (
+        f"{picture}: fully_preserved - use {picture} as the visual reference for the "
+        f"{name}; preserve its defining shape, proportions, color, surface appearance, "
+        f"and distinctive visible details whenever the {name} appears."
+    )
+
+
 def build_character_context_data(
     *,
     character: dict[str, Any],
@@ -97,6 +123,7 @@ def build_character_context_data(
     image_2: dict[str, Any],
     audio: dict[str, Any],
     scene: dict[str, Any] | None,
+    prop: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the deterministic, media-free context consumed by the enhancer."""
     image_1_role = validate_role("image", image_1.get("role"))
@@ -120,6 +147,9 @@ def build_character_context_data(
     subject_lines = [subject_1, _audio_definition(audio_role)]
     if scene is not None:
         subject_lines.append(_scene_subject_definition(scene))
+    prop_picture_number = 4 if scene and scene.get("reference_image") is not None else 3
+    if prop is not None:
+        subject_lines.append(_prop_subject_definition(prop, prop_picture_number))
 
     scene_phrase = " in <Subject 2>" if scene is not None else ""
     summary = (
@@ -138,6 +168,8 @@ def build_character_context_data(
     ]
     if scene is not None:
         retention_lines.append(_scene_retention(scene))
+    if prop is not None:
+        retention_lines.append(_prop_retention(prop, prop_picture_number))
     audio_retention = AUDIO_ROLE_METADATA[audio_role]["retention"]
     retention_lines.append(
         f"<Audio 1>: reference - preserve {audio_retention} without copying the "
@@ -171,6 +203,7 @@ def build_character_context(
     image_2: dict[str, Any],
     audio: dict[str, Any],
     scene: dict[str, Any] | None,
+    prop: dict[str, Any] | None = None,
 ) -> str:
     return serialize_character_context(
         build_character_context_data(
@@ -179,6 +212,7 @@ def build_character_context(
             image_2=image_2,
             audio=audio,
             scene=scene,
+            prop=prop,
         )
     )
 
@@ -261,6 +295,7 @@ def build_ref2va_prompt(
     detailed_description: str,
     overall_soundscape: str,
     non_diegetic_music: str,
+    prop: dict[str, Any] | None = None,
 ) -> str:
     """Backward-compatible deterministic builder used by tests and integrations."""
     context = build_character_context_data(
@@ -269,6 +304,7 @@ def build_ref2va_prompt(
         image_2=image_2,
         audio=audio,
         scene=scene,
+        prop=prop,
     )
     return assemble_ref2va_prompt(
         character_context=context,

@@ -5,10 +5,12 @@ import { ComfyButton } from "../../scripts/ui/components/button.js";
 const NODE_TYPE = "H3CharacterReference";
 const API_PREFIX = "/api/h3-character-ref-builder";
 const NO_SCENE = "__h3_no_scene_preset__";
+const NO_PROP = "__h3_no_prop_reference__";
 const TOPBAR_BUTTON_ID = "h3-character-manager-topbar-button";
 
 let charactersById = new Map();
 let scenesById = new Map();
+let propsById = new Map();
 let refreshPromise = null;
 
 function labelForCharacter(value) {
@@ -21,9 +23,15 @@ function labelForScene(value) {
   return scenesById.get(String(value)) || `Missing scene (${value})`;
 }
 
+function labelForProp(value) {
+  if (value === NO_PROP) return "(No Prop Reference)";
+  return propsById.get(String(value)) || `Missing prop (${value})`;
+}
+
 const WIDGET_LABELS = Object.freeze({
   character: "Character",
   scene: "Scene Preset",
+  prop: "Prop Reference",
 });
 
 function applyWidgetLabels(node) {
@@ -57,18 +65,21 @@ function applyCatalogs(node, catalogs) {
   applyWidgetLabels(node);
   applyOptions(node, "character", catalogs.characters, "", labelForCharacter, true);
   applyOptions(node, "scene", catalogs.scenes, NO_SCENE, labelForScene, false);
+  applyOptions(node, "prop", catalogs.props, NO_PROP, labelForProp, false);
 }
 
 async function fetchCatalogs() {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
-    const [characterResponse, sceneResponse] = await Promise.all([
+    const [characterResponse, sceneResponse, propResponse] = await Promise.all([
       api.fetchApi(`${API_PREFIX}/characters`, { cache: "no-store" }),
       api.fetchApi(`${API_PREFIX}/scenes`, { cache: "no-store" }),
+      api.fetchApi(`${API_PREFIX}/props`, { cache: "no-store" }),
     ]);
-    const [characters, scenes] = await Promise.all([
+    const [characters, scenes, props] = await Promise.all([
       characterResponse.json(),
       sceneResponse.json(),
+      propResponse.json(),
     ]);
     if (!characterResponse.ok || !characters.ok || !Array.isArray(characters.data)) {
       throw new Error(characters?.error?.message || "Could not load H3 character profiles.");
@@ -76,9 +87,14 @@ async function fetchCatalogs() {
     if (!sceneResponse.ok || !scenes.ok || !Array.isArray(scenes.data)) {
       throw new Error(scenes?.error?.message || "Could not load H3 Scene Presets.");
     }
+    if (!propResponse.ok || !props.ok || !Array.isArray(props.data)) {
+      throw new Error(props?.error?.message || "Could not load H3 Prop References.");
+    }
     charactersById = new Map(characters.data.map((item) => [item.id, item.name]));
     scenesById = new Map(scenes.data.map((item) => [item.id, item.name]));
-    return { characters: characters.data, scenes: scenes.data };
+    const usableProps = props.data.filter((item) => item.usable);
+    propsById = new Map(usableProps.map((item) => [item.id, item.name]));
+    return { characters: characters.data, scenes: scenes.data, props: usableProps };
   })();
   try {
     return await refreshPromise;

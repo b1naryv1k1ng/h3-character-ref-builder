@@ -22,9 +22,11 @@ from .prompt_enhancer import (
     enhancer_execution_fingerprint,
     get_enhancement,
 )
+from .prop_store import InvalidPropId, get_default_prop_store, validate_prop_id
 from .scene_store import InvalidSceneId, get_default_scene_store, validate_scene_id
 
 NO_SCENE = "__h3_no_scene_preset__"
+NO_PROP = "__h3_no_prop_reference__"
 
 
 class H3CharacterReference:
@@ -35,6 +37,10 @@ class H3CharacterReference:
         scene_ids = [
             NO_SCENE,
             *[scene["id"] for scene in get_default_scene_store().list_scenes()],
+        ]
+        prop_ids = [
+            NO_PROP,
+            *[prop["id"] for prop in get_default_prop_store().list_usable_props()],
         ]
         return {
             "required": {
@@ -56,16 +62,25 @@ class H3CharacterReference:
                         "tooltip": "Optional reusable Scene Preset.",
                     },
                 ),
+                "prop": (
+                    prop_ids,
+                    {
+                        "default": NO_PROP,
+                        "label": "Prop Reference",
+                        "tooltip": "Optional reusable single-image Prop Reference.",
+                    },
+                ),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "IMAGE", "AUDIO", "STRING", "IMAGE")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "AUDIO", "STRING", "IMAGE", "IMAGE")
     RETURN_NAMES = (
         "character_image_1",
         "character_image_2",
         "audio",
         "character_context",
         "scene_image",
+        "prop_image",
     )
     FUNCTION = "load_character"
     CATEGORY = "H3/Reference"
@@ -75,7 +90,7 @@ class H3CharacterReference:
 
     @classmethod
     def VALIDATE_INPUTS(
-        cls, character, scene=NO_SCENE, *legacy_values, **legacy_inputs
+        cls, character, scene=NO_SCENE, prop=NO_PROP, *legacy_values, **legacy_inputs
     ):
         del legacy_values, legacy_inputs
         if not character:
@@ -84,29 +99,53 @@ class H3CharacterReference:
             validate_character_id(character)
             if scene != NO_SCENE:
                 validate_scene_id(scene)
+            if prop != NO_PROP:
+                try:
+                    validate_prop_id(prop)
+                except InvalidPropId:
+                    # Pre-prop workflows may supply an obsolete positional widget here.
+                    pass
         except (InvalidCharacterId, InvalidSceneId) as exc:
             return str(exc)
         return True
 
     @classmethod
-    def IS_CHANGED(cls, character, scene=NO_SCENE, *legacy_values, **legacy_inputs):
+    def IS_CHANGED(
+        cls, character, scene=NO_SCENE, prop=NO_PROP, *legacy_values, **legacy_inputs
+    ):
         del legacy_values, legacy_inputs
         if not character:
             return "no-character-selected"
         scene_fingerprint = "no-scene"
         if scene != NO_SCENE:
             scene_fingerprint = get_default_scene_store().prompt_fingerprint(scene)
+        try:
+            canonical_prop = validate_prop_id(prop) if prop != NO_PROP else None
+        except InvalidPropId:
+            canonical_prop = None
+        prop_fingerprint = (
+            get_default_prop_store().fingerprint(canonical_prop)
+            if canonical_prop is not None
+            else "no-prop"
+        )
         relevant = {
             "character": get_default_store().fingerprint(character),
             "scene_selection": scene,
             "scene": scene_fingerprint,
+            "prop_selection": canonical_prop or NO_PROP,
+            "prop": prop_fingerprint,
         }
         return hashlib.sha256(
             json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
     def load_character(
-        self, character, scene=NO_SCENE, *legacy_values, **legacy_inputs
+        self,
+        character,
+        scene=NO_SCENE,
+        prop=NO_PROP,
+        *legacy_values,
+        **legacy_inputs,
     ):
         del legacy_values, legacy_inputs
         if not character:
@@ -121,12 +160,23 @@ class H3CharacterReference:
             scene_data = scene_store.get_scene(scene)
             if scene_data["reference_image"] is not None:
                 scene_image = load_image(scene_store.reference_image_path(scene))
+        try:
+            canonical_prop = validate_prop_id(prop) if prop != NO_PROP else None
+        except InvalidPropId:
+            canonical_prop = None
+        prop_data = None
+        prop_image = None
+        if canonical_prop is not None:
+            prop_store = get_default_prop_store()
+            prop_data = prop_store.get_prop(canonical_prop)
+            prop_image = load_image(prop_store.reference_image_path(canonical_prop))
         character_context = build_character_context(
             character=selected["profile"],
             image_1=selected["records"]["image_1"],
             image_2=selected["records"]["image_2"],
             audio=selected["records"]["audio"],
             scene=scene_data,
+            prop=prop_data,
         )
         return (
             load_image(selected["paths"]["image_1"]),
@@ -134,6 +184,7 @@ class H3CharacterReference:
             load_audio(selected["paths"]["audio"]),
             character_context,
             scene_image,
+            prop_image,
         )
 
 

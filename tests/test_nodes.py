@@ -27,7 +27,7 @@ def test_node_resolves_defaults_by_media_uuid_not_array_index(store, monkeypatch
     monkeypatch.setattr(node_module, "load_image", lambda path: path.name)
     monkeypatch.setattr(node_module, "load_audio", lambda path: path.name)
 
-    image_1, image_2, selected_audio, context_json, scene_image = (
+    image_1, image_2, selected_audio, context_json, scene_image, prop_image = (
         H3CharacterReference().load_character(profile["id"])
     )
     context = json.loads(context_json)
@@ -45,6 +45,7 @@ def test_node_resolves_defaults_by_media_uuid_not_array_index(store, monkeypatch
     assert "file" not in context_json
     assert "images/" not in context_json
     assert scene_image is None
+    assert prop_image is None
 
 
 def test_node_output_contract_preserves_media_positions_and_returns_context():
@@ -54,6 +55,7 @@ def test_node_output_contract_preserves_media_positions_and_returns_context():
         "AUDIO",
         "STRING",
         "IMAGE",
+        "IMAGE",
     )
     assert H3CharacterReference.RETURN_NAMES == (
         "character_image_1",
@@ -61,6 +63,7 @@ def test_node_output_contract_preserves_media_positions_and_returns_context():
         "audio",
         "character_context",
         "scene_image",
+        "prop_image",
     )
 
 

@@ -23,6 +23,7 @@ storage remain local and deterministic.
 - Two active image defaults and one active audio default per generation
 - Semantic image/audio roles for deterministic subject and retention text
 - Independent Scene Presets with definitions, baseline soundscapes, and one optional managed reference image
+- Reusable single-image Prop References with deterministic names and optional descriptions
 - Human-inspectable, versioned `character_context` JSON with no media paths or bytes
 - Provider-agnostic OpenAI-compatible chat-completions client
 - Strict structured-output request with a JSON-only compatibility fallback
@@ -79,14 +80,16 @@ key into a workflow, node widget, Scene Preset, or Character Manager field.
    one active audio reference.
 3. Optionally create and select a Scene Preset with a raw environment definition and
    baseline soundscape. A Scene Preset can also hold one optional environment image.
-4. Add **H3 Character Reference** from **H3 → Reference**.
-5. Connect `character_image_1`, `character_image_2`, and `audio` to the H3 reference
-   inputs. When present, connect `scene_image` as the `<Picture 3>` environment input.
-6. Add **H3 Prompt Enhancer** from **H3 → Prompt**.
-7. Connect `character_context` from the first node to the enhancer.
-8. Enter a duration, editable System Prompt, rough Action Idea, optional Additional
+4. Optionally create a Prop Reference with its single required image and select it on the
+   H3 Character Reference node.
+5. Add **H3 Character Reference** from **H3 → Reference**.
+6. Connect `character_image_1`, `character_image_2`, and `audio` to the H3 reference
+   inputs. When present, also connect `scene_image` and `prop_image` to matching H3 inputs.
+7. Add **H3 Prompt Enhancer** from **H3 → Prompt**.
+8. Connect `character_context` from the first node to the enhancer.
+9. Enter a duration, editable System Prompt, rough Action Idea, optional Additional
    Notes, and music.
-9. Connect the enhancer's `prompt` output to the MiniMax H3 prompt input.
+10. Connect the enhancer's `prompt` output to the MiniMax H3 prompt input.
 
 The two inspection outputs expose exactly the structured action fields used during final
 assembly: `detailed_description` and `additional_soundscape`.
@@ -98,6 +101,7 @@ Inputs:
 ```text
 Character     selected character UUID
 Scene Preset  selected scene UUID or (No Scene Preset)
+Prop Reference selected prop UUID or (No Prop Reference)
 ```
 
 Outputs:
@@ -108,12 +112,14 @@ Outputs:
 3  AUDIO   audio
 4  STRING  character_context
 5  IMAGE   scene_image
+6  IMAGE   prop_image
 ```
 
 The original first four slot positions remain unchanged for saved-workflow compatibility;
 only the first two visible names changed. `scene_image` is appended in slot 5 and is the
 optional `<Picture 3>` environment reference. When the selected scene is text-only (or
 no scene is selected), this output is `None`; no synthetic placeholder image is created.
+`prop_image` is appended in slot 6 and likewise returns `None` when no prop is selected.
 
 ### Character context schema V1
 
@@ -137,6 +143,31 @@ For a visual Scene Preset, deterministic context defines `<Subject 2>` from `<Pi
 and treats the saved scene definition as supplemental detail. Text-only Scene Presets
 retain the existing `<Subject 2> is {scene definition}` behavior. The scene image is sent
 to H3 through `scene_image`; it is never sent to the prompt-enhancement provider.
+
+### Prop References
+
+Prop References are an independent reusable library, not part of characters or Scene
+Presets. Each prop has a UUID, a required deterministic name, an optional description,
+and exactly one managed image. The manager may temporarily hold a newly created prop
+without an image so the two-step upload can complete; incomplete props are clearly
+marked and are not offered in the node selector.
+
+Only one prop can be selected on an H3 Character Reference node. Its name is used as the
+deterministic noun and its optional description is supplemental visual information. The
+generated context describes the selected picture as the visual reference for that prop
+while explicitly excluding background, lighting, framing, surrounding people/body
+parts, pose, and unrelated content. It never assigns the prop to a subject or implies
+ownership.
+
+Picture numbering follows the actual connected image outputs:
+
+- With a real Scene Preset image: scene is `<Picture 3>` and prop is `<Picture 4>`.
+- Without a real scene image (including a text-only Scene Preset): prop is `<Picture 3>`.
+
+The selected prop's deterministic definition and retention guidance are included in
+`character_context`, but neither the prop metadata nor image is sent to the prompt
+enhancement provider. Connect `prop_image` to the matching H3 picture input. With no
+selection, slot 6 is `None`; no placeholder is generated.
 
 The context contains no image bytes, audio bytes, file paths, media labels, character
 names, or other storage details.
@@ -231,9 +262,12 @@ Music is copied from the widget and falls back to `N/A` when blank.
 ## Cache behavior
 
 **H3 Character Reference** fingerprints only the selected character/reference state and
-selected Scene Preset definition, soundscape, and managed reference-image content. Adding,
-replacing, or removing the selected scene image invalidates this node. Unused references,
-unrelated characters/scenes, character names, scene names, and media labels do not.
+selected Scene Preset definition, soundscape, and managed reference-image content, plus
+the selected Prop Reference UUID, name, description, and image content. Editing or
+replacing the selected prop invalidates the node; editing an unrelated prop does not.
+Adding, replacing, or removing the selected scene image also invalidates this node.
+Unused references, unrelated characters/scenes/props, character names, scene names, and
+media labels do not.
 
 **H3 Prompt Enhancer** uses two cache layers:
 
@@ -251,7 +285,7 @@ excluded from workflow data, fingerprints, logs, and errors.
 ## Existing workflow migration
 
 The `H3CharacterReference` node type and all four prior output positions are retained;
-the optional scene image was appended as output 5.
+the optional scene image and prop image were appended as outputs 5 and 6.
 Its Python execution methods accept and ignore legacy prompt-authoring arguments where
 ComfyUI supplies them by name or position. The three obsolete widgets are no longer
 declared for new nodes.
@@ -275,6 +309,9 @@ Data remains beneath `folder_paths.get_user_directory()`:
 ├── scenes/<scene UUID>/
 │   ├── scene.json
 │   └── images/<scene-image UUID>.<ext>  (optional)
+├── props/<prop UUID>/
+│   ├── prop.json
+│   └── images/<prop-image UUID>.<ext>
 └── prompt-enhancer-config.json
 ```
 
@@ -285,6 +322,10 @@ same validation as character images, and are cleaned up on replacement, removal,
 deletion. Supported images remain PNG, JPEG/JPG, and WebP; supported audio remains WAV,
 MP3, FLAC, M4A, OGG, and AAC according to ComfyUI's PyAV/FFmpeg stack.
 
+Prop schema V1 uses the same UUID/path/media validation and atomic metadata writes. Prop
+image replacement preserves the media UUID when possible and removes the superseded file;
+deleting a prop removes its managed directory.
+
 ## Tests
 
 The suite uses mocked HTTP calls and never contacts a real provider:
@@ -293,10 +334,10 @@ The suite uses mocked HTTP calls and never contacts a real provider:
 python -m pytest
 ```
 
-Coverage includes storage/migrations, route security, deterministic context, exact final
-section order, soundscape combinations, structured/fenced response parsing, provider
-authentication/rate-limit/server/network failures, secret redaction, and enhancement
-cache boundaries.
+Coverage includes character/scene/prop storage, migrations, route security, deterministic
+context and picture numbering, exact final section order, soundscape combinations,
+structured/fenced response parsing, provider authentication/rate-limit/server/network
+failures, secret redaction, and enhancement cache boundaries.
 
 ## License
 

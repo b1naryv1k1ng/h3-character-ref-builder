@@ -234,7 +234,8 @@ def test_character_reference_returns_real_scene_image_in_compatible_slot(
     output = H3CharacterReference().load_character(profile["id"], scene["id"])
     context = json.loads(output[3])
 
-    assert len(output) == 5
+    assert len(output) == 6
+    assert output[5] is None
     assert image_id in output[4]
     assert "<Picture 3>" in context["subject_definitions"]
     assert "<Picture 3>" in context["retention_analysis"]

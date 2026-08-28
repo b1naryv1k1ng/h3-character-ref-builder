@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from h3_character_ref_builder import nodes as node_module
 from h3_character_ref_builder.nodes import H3CharacterReference, H3PromptEnhancer
 from h3_character_ref_builder.prompt_builder import DEFAULT_SOUNDSCAPE
+from h3_character_ref_builder.prop_store import PropStore
 from h3_character_ref_builder.roles import IMAGE_ROLE_METADATA
 from h3_character_ref_builder.scene_store import SCENE_SCHEMA_VERSION, SceneStore
 
@@ -202,10 +203,12 @@ def test_character_node_removes_authoring_widgets_and_enhancer_owns_them(
 ):
     complete_profile(store)
     scenes = SceneStore(tmp_path / "managed-scenes")
+    props = PropStore(tmp_path / "managed-props")
     monkeypatch.setattr(node_module, "get_default_store", lambda: store)
     monkeypatch.setattr(node_module, "get_default_scene_store", lambda: scenes)
+    monkeypatch.setattr(node_module, "get_default_prop_store", lambda: props)
 
-    assert set(H3CharacterReference.INPUT_TYPES()["optional"]) == {"scene"}
+    assert set(H3CharacterReference.INPUT_TYPES()["optional"]) == {"scene", "prop"}
     required = H3PromptEnhancer.INPUT_TYPES()["required"]
     expected = {
         "system_prompt": "System Prompt",

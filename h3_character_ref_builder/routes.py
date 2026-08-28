@@ -25,6 +25,16 @@ from .enhancer_config import (
     get_default_provider_config_store,
 )
 from .media import InvalidMedia
+from .prop_store import (
+    DuplicatePropName,
+    InvalidProp,
+    InvalidPropId,
+    MissingPropImage,
+    PropCorrupt,
+    PropImageNotFound,
+    PropNotFound,
+    get_default_prop_store,
+)
 from .scene_store import (
     DuplicateSceneName,
     InvalidScene,
@@ -66,6 +76,16 @@ def _scene_response(scene: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _prop_response(prop: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(prop)
+    result["usable"] = result["reference_image"] is not None
+    if result["reference_image"] is not None:
+        result["reference_image"]["url"] = (
+            f"{API_PREFIX}/props/{prop['id']}/reference-image"
+        )
+    return result
+
+
 def _error_status(error: Exception) -> int:
     if isinstance(
         error,
@@ -76,11 +96,20 @@ def _error_status(error: Exception) -> int:
             SceneNotFound,
             SceneImageNotFound,
             MissingSceneImage,
+            PropNotFound,
+            PropImageNotFound,
+            MissingPropImage,
         ),
     ):
         return 404
     if isinstance(
-        error, (DuplicateCharacterName, MediaLimitReached, DuplicateSceneName)
+        error,
+        (
+            DuplicateCharacterName,
+            MediaLimitReached,
+            DuplicateSceneName,
+            DuplicatePropName,
+        ),
     ):
         return 409
     if isinstance(
@@ -94,6 +123,9 @@ def _error_status(error: Exception) -> int:
             InvalidSceneId,
             InvalidScene,
             SceneCorrupt,
+            InvalidPropId,
+            InvalidProp,
+            PropCorrupt,
             InvalidProviderConfig,
             ValueError,
         ),
@@ -418,6 +450,88 @@ def register_routes() -> None:
         except Exception as error:
             return _error_json(web, error)
 
+    async def list_props(request):
+        del request
+        try:
+            return web.json_response(
+                {"ok": True, "data": get_default_prop_store().list_props()}
+            )
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def get_prop(request):
+        try:
+            prop = get_default_prop_store().get_prop(request.match_info["id"])
+            return web.json_response({"ok": True, "data": _prop_response(prop)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def create_prop(request):
+        try:
+            payload = await _json_body(request)
+            if set(payload) - {"name", "description"}:
+                raise InvalidProp("Unsupported Prop Reference fields.")
+            prop = get_default_prop_store().create_prop(
+                payload.get("name", ""), payload.get("description", "")
+            )
+            return web.json_response(
+                {"ok": True, "data": _prop_response(prop)}, status=201
+            )
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def update_prop(request):
+        try:
+            payload = await _json_body(request)
+            if set(payload) - {"name", "description"}:
+                raise InvalidProp("Unsupported Prop Reference fields.")
+            if not payload:
+                raise InvalidProp("Prop update requires a name or description.")
+            prop = get_default_prop_store().update_prop(
+                request.match_info["id"],
+                name=payload.get("name"),
+                description=payload.get("description"),
+            )
+            return web.json_response({"ok": True, "data": _prop_response(prop)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def delete_prop(request):
+        try:
+            get_default_prop_store().delete_prop(request.match_info["id"])
+            return web.json_response({"ok": True, "data": None})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def set_prop_reference_image(request):
+        try:
+            fields, contents, filename, content_type = await _multipart_body(request)
+            if fields:
+                raise InvalidProp("Prop image upload accepts only the file field.")
+            if contents is None or not filename:
+                raise InvalidMedia("Multipart field 'file' is required.")
+            prop = get_default_prop_store().set_reference_image(
+                request.match_info["id"],
+                io.BytesIO(contents),
+                filename,
+                content_type=content_type,
+            )
+            return web.json_response({"ok": True, "data": _prop_response(prop)})
+        except Exception as error:
+            return _error_json(web, error)
+
+    async def serve_prop_reference_image(request):
+        try:
+            path = get_default_prop_store().reference_image_path(
+                request.match_info["id"]
+            )
+            response = web.FileResponse(path)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+        except Exception as error:
+            return _error_json(web, error)
+
     async def get_prompt_enhancer_config(request):
         del request
         try:
@@ -506,6 +620,14 @@ def register_routes() -> None:
     routes.get(f"{API_PREFIX}/scenes/{{id}}/reference-image")(
         serve_scene_reference_image
     )
+    routes.get(f"{API_PREFIX}/props")(list_props)
+    routes.get(f"{API_PREFIX}/props/{{id}}")(get_prop)
+    routes.post(f"{API_PREFIX}/props")(create_prop)
+    routes.put(f"{API_PREFIX}/props/{{id}}")(update_prop)
+    routes.patch(f"{API_PREFIX}/props/{{id}}")(update_prop)
+    routes.delete(f"{API_PREFIX}/props/{{id}}")(delete_prop)
+    routes.post(f"{API_PREFIX}/props/{{id}}/reference-image")(set_prop_reference_image)
+    routes.get(f"{API_PREFIX}/props/{{id}}/reference-image")(serve_prop_reference_image)
     routes.get(f"{API_PREFIX}/prompt-enhancer/config")(get_prompt_enhancer_config)
     routes.put(f"{API_PREFIX}/prompt-enhancer/config")(update_prompt_enhancer_config)
     routes.put(f"{API_PREFIX}/prompt-enhancer/api-key")(set_prompt_enhancer_api_key)

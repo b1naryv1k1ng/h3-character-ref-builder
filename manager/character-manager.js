@@ -21,6 +21,7 @@ const AUDIO_ROLES = [
 
 const elements = Object.fromEntries([
   "new-item", "characters-tab", "scenes-tab", "status", "sidebar-title", "item-count",
+  "props-tab",
   "item-list", "empty-list", "editor-empty", "empty-title", "empty-message",
   "character-form", "character-title", "character-id", "character-name",
   "character-description", "readiness", "image-library", "audio-library", "image-count",
@@ -29,6 +30,9 @@ const elements = Object.fromEntries([
   "scene-form", "scene-title", "scene-id", "scene-name", "scene-definition", "scene-default-soundscape", "delete-scene",
   "scene-upload-image", "scene-remove-image", "scene-image-file", "scene-reference-preview",
   "scene-reference-image", "scene-reference-empty", "scene-reference-actions",
+  "prop-form", "prop-title", "prop-id", "prop-name", "prop-description", "prop-readiness",
+  "prop-upload-image", "prop-image-file", "prop-reference-preview", "prop-reference-image",
+  "prop-reference-empty", "delete-prop", "prop-dirty",
   "scene-dirty", "confirm-dialog", "confirm-title", "confirm-message",
 ].map((id) => [id.replaceAll("-", "_"), document.querySelector(`#${id}`)]));
 
@@ -36,10 +40,13 @@ const state = {
   tab: "characters",
   characters: [],
   scenes: [],
+  props: [],
   character: null,
   characterOriginal: null,
   scene: null,
   sceneOriginal: null,
+  prop: null,
+  propOriginal: null,
   dirty: false,
   busy: false,
   fileAction: null,
@@ -64,22 +71,26 @@ function setDirty(value = true) {
   state.dirty = value;
   elements.character_dirty.hidden = !(value && state.tab === "characters");
   elements.scene_dirty.hidden = !(value && state.tab === "scenes");
+  elements.prop_dirty.hidden = !(value && state.tab === "props");
   if (value) showStatus("");
 }
 
 function updateControls() {
   const characterSaved = Boolean(state.character?.id);
   const sceneSaved = Boolean(state.scene?.id);
+  const propSaved = Boolean(state.prop?.id);
   const imageLimit = (state.character?.images?.length || 0) >= IMAGE_LIMIT;
   const audioLimit = (state.character?.audio?.length || 0) >= AUDIO_LIMIT;
   elements.new_item.disabled = state.busy;
   elements.characters_tab.disabled = state.busy;
   elements.scenes_tab.disabled = state.busy;
+  elements.props_tab.disabled = state.busy;
   for (const control of document.querySelectorAll("input, textarea, select, .editor button")) control.disabled = state.busy;
   elements.add_image.disabled = state.busy || !characterSaved || imageLimit;
   elements.add_audio.disabled = state.busy || !characterSaved || audioLimit;
   elements.scene_upload_image.disabled = state.busy || !sceneSaved;
   elements.scene_remove_image.disabled = state.busy || !sceneSaved || !state.scene?.reference_image;
+  elements.prop_upload_image.disabled = state.busy || !propSaved;
 }
 
 function setBusy(value) { state.busy = value; updateControls(); }
@@ -98,8 +109,12 @@ async function mayDiscard() {
   return askConfirm("Discard unsaved changes?", "Your unsaved edits will be lost.");
 }
 
-function activeCatalog() { return state.tab === "characters" ? state.characters : state.scenes; }
-function activeCurrent() { return state.tab === "characters" ? state.character : state.scene; }
+function activeCatalog() {
+  return state.tab === "characters" ? state.characters : state.tab === "scenes" ? state.scenes : state.props;
+}
+function activeCurrent() {
+  return state.tab === "characters" ? state.character : state.tab === "scenes" ? state.scene : state.prop;
+}
 
 function renderList() {
   const catalog = activeCatalog();
@@ -109,7 +124,9 @@ function renderList() {
   elements.empty_list.hidden = catalog.length !== 0;
   elements.empty_list.textContent = state.tab === "characters"
     ? "No characters yet. Create one to get started."
-    : "No Scene Presets yet. Create one to define an environment.";
+    : state.tab === "scenes"
+      ? "No Scene Presets yet. Create one to define an environment."
+      : "No Prop References yet. Create one to define a reusable visual object.";
   for (const item of catalog) {
     const button = document.createElement("button");
     button.type = "button";
@@ -124,13 +141,17 @@ function renderList() {
 function showEmpty() {
   elements.character_form.hidden = true;
   elements.scene_form.hidden = true;
+  elements.prop_form.hidden = true;
   elements.editor_empty.hidden = false;
   if (state.tab === "characters") {
     elements.empty_title.textContent = "Select a character";
     elements.empty_message.textContent = "Choose a profile from the list or create a new one.";
-  } else {
+  } else if (state.tab === "scenes") {
     elements.empty_title.textContent = "Select a Scene Preset";
     elements.empty_message.textContent = "Choose an environment from the list or create a new one.";
+  } else {
+    elements.empty_title.textContent = "Select a Prop Reference";
+    elements.empty_message.textContent = "Choose a prop from the list or create a new visual reference.";
   }
 }
 
@@ -237,9 +258,34 @@ function renderSceneReference() {
   updateControls();
 }
 
+function renderPropReference() {
+  const reference = state.prop?.reference_image;
+  elements.prop_reference_preview.hidden = !reference;
+  elements.prop_reference_empty.hidden = Boolean(reference);
+  elements.prop_upload_image.textContent = reference ? "Replace" : "Upload";
+  elements.prop_readiness.textContent = reference
+    ? "Usable: this Prop Reference can be selected in H3 Character Reference."
+    : "Not usable yet: upload the required reference image.";
+  elements.prop_readiness.classList.toggle("incomplete", !reference);
+  if (reference) elements.prop_reference_image.src = `${fileUrl(reference.url)}?v=${Date.now()}`;
+  else elements.prop_reference_image.removeAttribute("src");
+  updateControls();
+}
+
+function showProp(prop) {
+  state.prop = clone(prop); state.propOriginal = clone(prop);
+  state.character = null; state.characterOriginal = null; state.scene = null; state.sceneOriginal = null;
+  elements.editor_empty.hidden = true; elements.character_form.hidden = true; elements.scene_form.hidden = true; elements.prop_form.hidden = false;
+  elements.prop_name.value = prop.name || ""; elements.prop_description.value = prop.description || "";
+  elements.prop_title.textContent = prop.id ? prop.name : "New Prop Reference";
+  elements.prop_id.textContent = prop.id ? `UUID ${prop.id}` : "UUID assigned on save";
+  elements.delete_prop.hidden = !prop.id; setDirty(false); renderList(); renderPropReference(); elements.prop_name.focus();
+}
+
 function showCharacter(profile) {
   state.character = clone(profile); state.characterOriginal = clone(profile); state.scene = null; state.sceneOriginal = null;
-  elements.editor_empty.hidden = true; elements.scene_form.hidden = true; elements.character_form.hidden = false;
+  state.prop = null; state.propOriginal = null;
+  elements.editor_empty.hidden = true; elements.scene_form.hidden = true; elements.prop_form.hidden = true; elements.character_form.hidden = false;
   elements.character_name.value = profile.name || ""; elements.character_description.value = profile.description || "";
   elements.character_title.textContent = profile.id ? profile.name : "New Character";
   elements.character_id.textContent = profile.id ? `UUID ${profile.id}` : "UUID assigned on save";
@@ -248,7 +294,8 @@ function showCharacter(profile) {
 
 function showScene(scene) {
   state.scene = clone(scene); state.sceneOriginal = clone(scene); state.character = null; state.characterOriginal = null;
-  elements.editor_empty.hidden = true; elements.character_form.hidden = true; elements.scene_form.hidden = false;
+  state.prop = null; state.propOriginal = null;
+  elements.editor_empty.hidden = true; elements.character_form.hidden = true; elements.prop_form.hidden = true; elements.scene_form.hidden = false;
   elements.scene_name.value = scene.name || ""; elements.scene_definition.value = scene.definition || ""; elements.scene_default_soundscape.value = scene.default_soundscape || "";
   elements.scene_title.textContent = scene.id ? scene.name : "New Scene Preset";
   elements.scene_id.textContent = scene.id ? `UUID ${scene.id}` : "UUID assigned on save";
@@ -256,7 +303,7 @@ function showScene(scene) {
 }
 
 async function refreshCatalogs() {
-  [state.characters, state.scenes] = await Promise.all([request("/characters"), request("/scenes")]);
+  [state.characters, state.scenes, state.props] = await Promise.all([request("/characters"), request("/scenes"), request("/props")]);
   renderList();
 }
 
@@ -265,18 +312,20 @@ async function selectItem(id) {
   try {
     showStatus("");
     if (state.tab === "characters") showCharacter(await request(`/characters/${encodeURIComponent(id)}`));
-    else showScene(await request(`/scenes/${encodeURIComponent(id)}`));
+    else if (state.tab === "scenes") showScene(await request(`/scenes/${encodeURIComponent(id)}`));
+    else showProp(await request(`/props/${encodeURIComponent(id)}`));
   } catch (error) { showStatus(error.message, "error"); await refreshCatalogs(); }
 }
 
 async function switchTab(tab) {
   if (state.tab === tab || state.busy || !(await mayDiscard())) return;
-  state.tab = tab; state.character = null; state.scene = null; setDirty(false); showStatus("");
+  state.tab = tab; state.character = null; state.scene = null; state.prop = null; setDirty(false); showStatus("");
   const characters = tab === "characters";
-  elements.characters_tab.classList.toggle("active", characters); elements.scenes_tab.classList.toggle("active", !characters);
-  elements.characters_tab.setAttribute("aria-selected", String(characters)); elements.scenes_tab.setAttribute("aria-selected", String(!characters));
-  elements.sidebar_title.textContent = characters ? "Characters" : "Scene Presets";
-  elements.new_item.textContent = characters ? "+ New Character" : "+ New Scene Preset";
+  const scenes = tab === "scenes";
+  elements.characters_tab.classList.toggle("active", characters); elements.scenes_tab.classList.toggle("active", scenes); elements.props_tab.classList.toggle("active", tab === "props");
+  elements.characters_tab.setAttribute("aria-selected", String(characters)); elements.scenes_tab.setAttribute("aria-selected", String(scenes)); elements.props_tab.setAttribute("aria-selected", String(tab === "props"));
+  elements.sidebar_title.textContent = characters ? "Characters" : scenes ? "Scene Presets" : "Prop References";
+  elements.new_item.textContent = characters ? "+ New Character" : scenes ? "+ New Scene Preset" : "+ New Prop Reference";
   showEmpty(); renderList();
   const first = activeCatalog()[0]; if (first) await selectItem(first.id);
 }
@@ -284,7 +333,8 @@ async function switchTab(tab) {
 async function newItem() {
   if (state.busy || !(await mayDiscard())) return; showStatus("");
   if (state.tab === "characters") showCharacter({ schema_version: 3, id: null, name: "", description: "", images: [], audio: [], defaults: { image_1: null, image_2: null, audio: null }, generation_ready: false });
-  else showScene({ schema_version: 3, id: null, name: "", definition: "", default_soundscape: "", reference_image: null });
+  else if (state.tab === "scenes") showScene({ schema_version: 3, id: null, name: "", definition: "", default_soundscape: "", reference_image: null });
+  else showProp({ schema_version: 1, id: null, name: "", description: "", reference_image: null, usable: false });
 }
 
 function validateUniqueName(value, catalog, currentId, label) {
@@ -364,6 +414,43 @@ async function removeSceneImage() {
   } catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
 }
 
+async function persistProp() {
+  const name = validateUniqueName(elements.prop_name.value, state.props, state.prop?.id, "Prop Reference");
+  const body = JSON.stringify({ name, description: elements.prop_description.value });
+  const prop = await request(state.prop.id ? `/props/${encodeURIComponent(state.prop.id)}` : "/props", { method: state.prop.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body });
+  showProp(prop); await refreshCatalogs(); return prop;
+}
+
+async function saveProp(event) {
+  event.preventDefault(); if (state.busy) return;
+  try {
+    setBusy(true); showStatus("Saving Prop Reference…");
+    const prop = await persistProp();
+    showStatus(prop.reference_image ? `Saved ${prop.name}.` : `Saved ${prop.name}. Upload its required image before using it in a node.`, "success");
+  } catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
+}
+
+async function savePendingProp() { if (state.dirty) await persistProp(); }
+
+function beginPropImageUpload() {
+  if (!state.prop?.id || state.busy) return;
+  elements.prop_image_file.value = "";
+  elements.prop_image_file.click();
+}
+
+async function handlePropImageFile(file) {
+  if (!file || !state.prop?.id || state.busy) return;
+  const replacing = Boolean(state.prop.reference_image);
+  try {
+    setBusy(true); await savePendingProp();
+    const form = new FormData(); form.append("file", file, file.name);
+    const prop = await request(`/props/${encodeURIComponent(state.prop.id)}/reference-image`, { method: "POST", body: form });
+    showProp(prop); await refreshCatalogs();
+    showStatus(replacing ? "Prop reference image replaced." : "Prop reference image uploaded. This prop is now usable.", "success");
+  } catch (error) { showStatus(error.message, "error"); }
+  finally { elements.prop_image_file.value = ""; setBusy(false); }
+}
+
 function selectDefault(slot, mediaId) {
   if (slot !== "audio") { const other = slot === "image_1" ? "image_2" : "image_1"; if (state.character.defaults[other] === mediaId) { showStatus("Image 1 and Image 2 must use different references.", "error"); renderLibraries(); return; } }
   state.character.defaults[slot] = mediaId; setDirty(); renderLibraries();
@@ -432,9 +519,11 @@ async function deleteReference(mediaType, record) {
 
 async function deleteCurrent() {
   const current = activeCurrent(); if (!current?.id || state.busy) return;
-  const label = state.tab === "characters" ? "character and all managed references" : "Scene Preset";
+  const label = state.tab === "characters" ? "character and all managed references" : state.tab === "scenes" ? "Scene Preset" : "Prop Reference and its managed image";
+  const collection = state.tab === "characters" ? "characters" : state.tab === "scenes" ? "scenes" : "props";
+  const display = state.tab === "characters" ? "Character" : state.tab === "scenes" ? "Scene Preset" : "Prop Reference";
   if (!(await askConfirm(`Delete ${current.name}?`, `This permanently removes this ${label}. Saved workflows using its UUID will report that it no longer exists.`))) return;
-  try { setBusy(true); await request(`/${state.tab === "characters" ? "characters" : "scenes"}/${encodeURIComponent(current.id)}`, { method: "DELETE" }); state.character = null; state.scene = null; setDirty(false); await refreshCatalogs(); showEmpty(); const first = activeCatalog()[0]; if (first) await selectItem(first.id); showStatus(`${state.tab === "characters" ? "Character" : "Scene Preset"} deleted.`, "success"); }
+  try { setBusy(true); await request(`/${collection}/${encodeURIComponent(current.id)}`, { method: "DELETE" }); state.character = null; state.scene = null; state.prop = null; setDirty(false); await refreshCatalogs(); showEmpty(); const first = activeCatalog()[0]; if (first) await selectItem(first.id); showStatus(`${display} deleted.`, "success"); }
   catch (error) { showStatus(error.message, "error"); } finally { setBusy(false); }
 }
 
@@ -444,13 +533,18 @@ for (const input of [elements.character_name, elements.character_description]) i
 for (const input of [elements.scene_name, elements.scene_definition, elements.scene_default_soundscape]) input.addEventListener("input", () => {
   if (state.scene) { state.scene.name = elements.scene_name.value; state.scene.definition = elements.scene_definition.value; state.scene.default_soundscape = elements.scene_default_soundscape.value; elements.scene_title.textContent = elements.scene_name.value.trim() || "New Scene Preset"; setDirty(); }
 });
-elements.characters_tab.addEventListener("click", () => switchTab("characters")); elements.scenes_tab.addEventListener("click", () => switchTab("scenes"));
-elements.new_item.addEventListener("click", newItem); elements.character_form.addEventListener("submit", saveCharacter); elements.scene_form.addEventListener("submit", saveScene);
-elements.delete_character.addEventListener("click", deleteCurrent); elements.delete_scene.addEventListener("click", deleteCurrent);
+for (const input of [elements.prop_name, elements.prop_description]) input.addEventListener("input", () => {
+  if (state.prop) { state.prop.name = elements.prop_name.value; state.prop.description = elements.prop_description.value; elements.prop_title.textContent = elements.prop_name.value.trim() || "New Prop Reference"; setDirty(); }
+});
+elements.characters_tab.addEventListener("click", () => switchTab("characters")); elements.scenes_tab.addEventListener("click", () => switchTab("scenes")); elements.props_tab.addEventListener("click", () => switchTab("props"));
+elements.new_item.addEventListener("click", newItem); elements.character_form.addEventListener("submit", saveCharacter); elements.scene_form.addEventListener("submit", saveScene); elements.prop_form.addEventListener("submit", saveProp);
+elements.delete_character.addEventListener("click", deleteCurrent); elements.delete_scene.addEventListener("click", deleteCurrent); elements.delete_prop.addEventListener("click", deleteCurrent);
 elements.add_image.addEventListener("click", () => beginAdd("image")); elements.add_audio.addEventListener("click", () => beginAdd("audio")); elements.media_file.addEventListener("change", () => handleMediaFile(elements.media_file.files[0]));
 elements.scene_upload_image.addEventListener("click", beginSceneImageUpload);
 elements.scene_remove_image.addEventListener("click", removeSceneImage);
 elements.scene_image_file.addEventListener("change", () => handleSceneImageFile(elements.scene_image_file.files[0]));
+elements.prop_upload_image.addEventListener("click", beginPropImageUpload);
+elements.prop_image_file.addEventListener("change", () => handlePropImageFile(elements.prop_image_file.files[0]));
 configureDropTarget(elements.image_library.closest(".library-section"), "image");
 configureDropTarget(elements.audio_library.closest(".library-section"), "audio");
 window.addEventListener("beforeunload", (event) => { if (state.dirty) { event.preventDefault(); event.returnValue = ""; } });
