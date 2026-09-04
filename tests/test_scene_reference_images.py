@@ -295,6 +295,7 @@ def test_visual_scene_prompt_uses_picture_3_and_keeps_text_as_supplement():
     assert context["scene_definition"] == "a vaulted station concourse"
     assert set(context) == {
         "schema_version",
+        "subject_roles",
         "subject_definitions",
         "summary",
         "retention_analysis",

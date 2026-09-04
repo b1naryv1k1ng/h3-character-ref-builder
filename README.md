@@ -4,12 +4,14 @@ H3 Character Ref Builder is a ComfyUI custom-node pack for reusable character
 references, Scene Presets, deterministic H3 context construction, and optional
 OpenAI-compatible action enhancement.
 
-The workflow is split between two nodes:
+The workflow uses one of two reference nodes plus one shared enhancer:
 
-1. **H3 Character Reference** loads the selected media and emits deterministic,
-   versioned `character_context` JSON.
-2. **H3 Prompt Enhancer** asks an OpenAI-compatible model only for action choreography
-   and action-specific sounds, then assembles the final six-section H3 Ref2VA prompt.
+1. **H3 Character Reference** loads one character, while **H3 Dual Character Reference**
+   loads two independent characters. Both emit deterministic, versioned
+   `character_context` JSON.
+2. **H3 Prompt Enhancer** accepts context from either reference node, asks an
+   OpenAI-compatible model only for action choreography and action-specific sounds, then
+   assembles the final six-section H3 Ref2VA prompt.
 
 The Character Manager, UUID-addressed media library, reference roles, and Scene Preset
 storage remain local and deterministic.
@@ -22,6 +24,7 @@ storage remain local and deterministic.
 - Immutable character, media, and scene UUIDs
 - Two active image defaults and one active audio default per generation
 - Semantic image/audio roles for deterministic subject and retention text
+- Separate single- and dual-character reference nodes using the same managed libraries
 - Independent Scene Presets with definitions, baseline soundscapes, and one optional managed reference image
 - Reusable single-image Prop References with deterministic names and optional descriptions
 - Human-inspectable, versioned `character_context` JSON with no media paths or bytes
@@ -80,13 +83,14 @@ key into a workflow, node widget, Scene Preset, or Character Manager field.
    one active audio reference.
 3. Optionally create and select a Scene Preset with a raw environment definition and
    baseline soundscape. A Scene Preset can also hold one optional environment image.
-4. Optionally create a Prop Reference with its single required image and select it on the
-   H3 Character Reference node.
-5. Add **H3 Character Reference** from **H3 → Reference**.
-6. Connect `character_image_1`, `character_image_2`, and `audio` to the H3 reference
-   inputs. When present, also connect `scene_image` and `prop_image` to matching H3 inputs.
-7. Add **H3 Prompt Enhancer** from **H3 → Prompt**.
-8. Connect `character_context` from the first node to the enhancer.
+4. Optionally create a Prop Reference with its single required image.
+5. Add **H3 Character Reference** for one character or **H3 Dual Character Reference**
+   for two independently referenced characters from **H3 → Reference**. Select optional
+   scene and prop references on that node.
+6. Connect each emitted character image/audio output and any real `scene_image` or
+   `prop_image` to the corresponding H3 reference inputs.
+7. Add the single shared **H3 Prompt Enhancer** from **H3 → Prompt**.
+8. Connect `character_context` from either reference node to the enhancer.
 9. Enter a duration, editable System Prompt, rough Action Idea, optional Additional
    Notes, and music.
 10. Connect the enhancer's `prompt` output to the MiniMax H3 prompt input.
@@ -116,16 +120,62 @@ Outputs:
 ```
 
 The original first four slot positions remain unchanged for saved-workflow compatibility;
-only the first two visible names changed. `scene_image` is appended in slot 5 and is the
-optional `<Picture 3>` environment reference. When the selected scene is text-only (or
-no scene is selected), this output is `None`; no synthetic placeholder image is created.
-`prop_image` is appended in slot 6 and likewise returns `None` when no prop is selected.
+only the first two visible names changed. In single-character mode, `<Subject 1>` is the
+character and `<Subject 2>` is the environment when a scene exists. `scene_image` is
+appended in slot 5 and is the optional `<Picture 3>` environment reference. When the
+selected scene is text-only (or no scene is selected), this output is `None`; no synthetic
+placeholder image is created. `prop_image` is appended in slot 6 and likewise returns
+`None` when no prop is selected.
 
-### Character context schema V1
+## H3 Dual Character Reference
+
+This separate node selects two independent profiles from the same Character library plus
+the same optional Scene Preset and Prop Reference libraries. Selecting the same profile
+twice is allowed. Its inputs are:
+
+```text
+Character 1    selected character UUID
+Character 2    selected character UUID
+Scene Preset   selected scene UUID or (No Scene Preset)
+Prop Reference selected prop UUID or (No Prop Reference)
+```
+
+Its outputs are:
+
+```text
+1  IMAGE   character_1_image_1
+2  IMAGE   character_1_image_2
+3  AUDIO   character_1_audio
+4  IMAGE   character_2_image_1
+5  IMAGE   character_2_image_2
+6  AUDIO   character_2_audio
+7  STRING  character_context
+8  IMAGE   scene_image
+9  IMAGE   prop_image
+```
+
+Dual-character numbering is exact and gap-free:
+
+- Character 1 is `<Subject 1>` using `<Picture 1>`, `<Picture 2>`, and `<Audio 1>`.
+- Character 2 is `<Subject 2>` using `<Picture 3>`, `<Picture 4>`, and `<Audio 2>`.
+- A selected scene is `<Subject 3>`. Its real image is `<Picture 5>`; a text-only scene
+  consumes no Picture slot.
+- A prop is `<Picture 6>` when a real scene image occupies Picture 5, otherwise it is
+  `<Picture 5>`. Props remain Picture references and never become Subjects.
+
+Absent scene and prop outputs are `None`, never placeholders. Both reference nodes feed
+the same H3 Prompt Enhancer.
+
+### Character context schema V2
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "subject_roles": {
+    "<Subject 1>": {"type": "character", "name": "Ashley"},
+    "<Subject 2>": {"type": "character", "name": "Vespera"},
+    "<Subject 3>": {"type": "environment", "name": "Beanbag"}
+  },
   "subject_definitions": "...",
   "summary": "...",
   "retention_analysis": "...",
@@ -134,15 +184,16 @@ no scene is selected), this output is `None`; no synthetic placeholder image is 
 }
 ```
 
-The first three fields preserve the deterministic V3.1 wording. `scene_definition` is
-the raw selected Scene Preset definition body and `default_soundscape` is its baseline
-ambience. With no scene, both fields are empty and `<Subject 2>` is omitted from all
-deterministic sections.
+`subject_roles` is structured, authoritative metadata mapping each Subject token to a
+saved character or environment name. Single mode uses Subject 1 for the character and
+Subject 2 for an optional environment. Dual mode uses Subjects 1 and 2 for the two
+characters and Subject 3 for an optional environment. Schema-v1 contexts remain accepted
+and are normalized to schema v2 with empty legacy names.
 
-For a visual Scene Preset, deterministic context defines `<Subject 2>` from `<Picture 3>`
-and treats the saved scene definition as supplemental detail. Text-only Scene Presets
-retain the existing `<Subject 2> is {scene definition}` behavior. The scene image is sent
-to H3 through `scene_image`; it is never sent to the prompt-enhancement provider.
+`scene_definition` is the raw selected Scene Preset definition body and
+`default_soundscape` is its baseline ambience. Visual scenes use the mode-specific Picture
+number and treat saved scene text as supplemental detail. Scene images are sent to H3 only;
+they are never sent to the prompt-enhancement provider.
 
 ### Prop References
 
@@ -152,7 +203,7 @@ and exactly one managed image. The manager may temporarily hold a newly created 
 without an image so the two-step upload can complete; incomplete props are clearly
 marked and are not offered in the node selector.
 
-Only one prop can be selected on an H3 Character Reference node. Its name is used as the
+Only one prop can be selected on either H3 reference node. Its name is used as the
 deterministic noun and its optional description is supplemental visual information. The
 generated context describes the selected picture as the visual reference for that prop
 while explicitly excluding background, lighting, framing, surrounding people/body
@@ -169,15 +220,15 @@ The selected prop's deterministic definition and retention guidance are included
 enhancement provider. Connect `prop_image` to the matching H3 picture input. With no
 selection, slot 6 is `None`; no placeholder is generated.
 
-The context contains no image bytes, audio bytes, file paths, media labels, character
-names, or other storage details.
+The context contains saved Subject names for choreography mapping, but no image bytes,
+audio bytes, file paths, media labels, filenames, or other media storage details.
 
 ## H3 Prompt Enhancer
 
 Inputs:
 
 ```text
-STRING  character_context   connection from H3 Character Reference
+STRING  character_context   connection from either H3 reference node
 INT     duration_seconds    default 15, range 1–60
 STRING  system_prompt       multiline workflow-owned provider instructions
 STRING  action_idea         multiline rough action request
@@ -199,10 +250,16 @@ no hidden instructions are prepended or appended. The normal multiline widget ca
 converted to a connected STRING input through ComfyUI's widget-to-input action. Blank
 or whitespace-only values fail validation.
 
-Only the duration, action idea, raw scene definition, and additional notes are sent as
-the JSON user message. Images, audio, deterministic subject boilerplate, retention
-text, baseline ambience, completed prompts, and the system prompt are not concatenated
-into that user message.
+Only `subject_roles`, duration, action idea, raw scene definition, and additional notes
+are sent as the JSON user message. Images, audio, deterministic subject boilerplate,
+retention text, baseline ambience, completed prompts, and the system prompt are not
+concatenated into that user message.
+
+Workflow-owned system prompts should treat `subject_roles` as authoritative: never
+hardcode that Subject 2 is always the environment, never reassign tokens, map matching
+action-idea names to their declared Subject token, and never make an environment Subject
+perform human actions. These instructions remain workflow-editable and are not silently
+inserted by Python.
 
 ### Structured provider response
 
@@ -261,26 +318,26 @@ Music is copied from the widget and falls back to `N/A` when blank.
 
 ## Cache behavior
 
-**H3 Character Reference** fingerprints only the selected character/reference state and
-selected Scene Preset definition, soundscape, and managed reference-image content, plus
-the selected Prop Reference UUID, name, description, and image content. Editing or
-replacing the selected prop invalidates the node; editing an unrelated prop does not.
-Adding, replacing, or removing the selected scene image also invalidates this node.
-Unused references, unrelated characters/scenes/props, character names, scene names, and
-media labels do not.
+Both reference nodes fingerprint only selected profiles and selected scene/prop state.
+The dual node independently includes Character 1 and Character 2 fingerprints. Selected
+character identity details, names, active media, media roles or contents; selected scene
+name, text, soundscape or image; and selected prop name, description or image invalidate
+the relevant node. Unrelated characters, scenes, props, unused references, and media
+labels do not.
 
 **H3 Prompt Enhancer** uses two cache layers:
 
 - Its ComfyUI fingerprint covers complete final-output inputs: full context, duration,
   action, notes, music, model/base URL configuration, and system-prompt content.
 - A bounded in-process paid-call cache covers only data actually affecting the LLM:
-  scene definition, duration, action, notes, endpoint, model, and system prompt.
+  subject roles, scene definition, duration, action, notes, endpoint, model, and
+  system prompt.
 
 Consequently, re-queuing unchanged nodes uses normal ComfyUI caching. Changing only
 music, deterministic subject text, or Scene Preset baseline ambience rebuilds the final
 prompt without another API call. Changing action, duration, notes, model/provider, raw
-scene definition, or system prompt causes a new enhancement request. The API key is
-excluded from workflow data, fingerprints, logs, and errors.
+scene definition, subject roles, or system prompt causes a new enhancement request. The
+API key is excluded from workflow data, fingerprints, logs, and errors.
 
 ## Existing workflow migration
 
@@ -294,7 +351,9 @@ This interface change is intentional: the fourth output now contains context JSO
 completed prompt. Existing workflows must add **H3 Prompt Enhancer**, reconnect the
 fourth output through it, and move their action/music authoring into the new node.
 Depending on the ComfyUI frontend version, recreating an old Character Reference node
-may be necessary to discard serialized legacy widget values cleanly.
+may be necessary to discard serialized legacy widget values cleanly. Existing
+`character_context` schema-v1 strings remain accepted by H3 Prompt Enhancer and normalize
+to schema v2 role metadata, preserving saved Reference → Enhancer workflows.
 
 ## Storage and media behavior
 
@@ -334,8 +393,8 @@ The suite uses mocked HTTP calls and never contacts a real provider:
 python -m pytest
 ```
 
-Coverage includes character/scene/prop storage, migrations, route security, deterministic
-context and picture numbering, exact final section order, soundscape combinations,
+Coverage includes character/scene/prop storage, migrations, route security, single/dual
+context, subject-role validation, dynamic Picture/Audio numbering, exact final section order, soundscape combinations,
 structured/fenced response parsing, provider authentication/rate-limit/server/network
 failures, secret redaction, and enhancement cache boundaries.
 

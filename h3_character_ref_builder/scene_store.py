@@ -506,6 +506,7 @@ class SceneStore:
             relevant = {
                 "schema_version": scene["schema_version"],
                 "id": scene["id"],
+                "name": scene["name"],
                 "definition": scene["definition"],
                 "default_soundscape": scene["default_soundscape"],
                 "reference_image": scene["reference_image"],

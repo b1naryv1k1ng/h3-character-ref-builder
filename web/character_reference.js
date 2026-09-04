@@ -2,7 +2,9 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { ComfyButton } from "../../scripts/ui/components/button.js";
 
-const NODE_TYPE = "H3CharacterReference";
+const SINGLE_NODE_TYPE = "H3CharacterReference";
+const DUAL_NODE_TYPE = "H3DualCharacterReference";
+const REFERENCE_NODE_TYPES = new Set([SINGLE_NODE_TYPE, DUAL_NODE_TYPE]);
 const API_PREFIX = "/api/h3-character-ref-builder";
 const NO_SCENE = "__h3_no_scene_preset__";
 const NO_PROP = "__h3_no_prop_reference__";
@@ -28,14 +30,29 @@ function labelForProp(value) {
   return propsById.get(String(value)) || `Missing prop (${value})`;
 }
 
-const WIDGET_LABELS = Object.freeze({
+const SINGLE_WIDGET_LABELS = Object.freeze({
   character: "Character",
   scene: "Scene Preset",
   prop: "Prop Reference",
 });
+const DUAL_WIDGET_LABELS = Object.freeze({
+  character_1: "Character 1",
+  character_2: "Character 2",
+  scene: "Scene Preset",
+  prop: "Prop Reference",
+});
+
+function nodeClass(node) {
+  return node.comfyClass || node.type;
+}
+
+function isReferenceNode(node) {
+  return REFERENCE_NODE_TYPES.has(nodeClass(node));
+}
 
 function applyWidgetLabels(node) {
-  for (const [name, label] of Object.entries(WIDGET_LABELS)) {
+  const labels = nodeClass(node) === DUAL_NODE_TYPE ? DUAL_WIDGET_LABELS : SINGLE_WIDGET_LABELS;
+  for (const [name, label] of Object.entries(labels)) {
     const widget = findWidget(node, name);
     if (widget) widget.label = label;
   }
@@ -46,7 +63,7 @@ function findWidget(node, name) {
 }
 
 function applyOptions(node, widgetName, items, fallback, labeler, chooseFirst) {
-  if (node.comfyClass !== NODE_TYPE && node.type !== NODE_TYPE) return;
+  if (!isReferenceNode(node)) return;
   const widget = findWidget(node, widgetName);
   if (!widget) return;
   const current = typeof widget.value === "string" ? widget.value : String(widget.value ?? "");
@@ -62,8 +79,14 @@ function applyOptions(node, widgetName, items, fallback, labeler, chooseFirst) {
 }
 
 function applyCatalogs(node, catalogs) {
+  if (!isReferenceNode(node)) return;
   applyWidgetLabels(node);
-  applyOptions(node, "character", catalogs.characters, "", labelForCharacter, true);
+  if (nodeClass(node) === DUAL_NODE_TYPE) {
+    applyOptions(node, "character_1", catalogs.characters, "", labelForCharacter, true);
+    applyOptions(node, "character_2", catalogs.characters, "", labelForCharacter, true);
+  } else {
+    applyOptions(node, "character", catalogs.characters, "", labelForCharacter, true);
+  }
   applyOptions(node, "scene", catalogs.scenes, NO_SCENE, labelForScene, false);
   applyOptions(node, "prop", catalogs.props, NO_PROP, labelForProp, false);
 }
@@ -171,7 +194,7 @@ app.registerExtension({
     },
   ],
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== NODE_TYPE) return;
+    if (!REFERENCE_NODE_TYPES.has(nodeData.name)) return;
     const originalCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function (...args) {
       const result = originalCreated?.apply(this, args);

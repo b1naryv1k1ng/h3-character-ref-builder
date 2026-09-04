@@ -16,6 +16,11 @@ from h3_character_ref_builder.prompt_builder import (
     serialize_character_context,
 )
 
+SUBJECT_ROLES = {
+    "<Subject 1>": {"type": "character", "name": "Ashley"},
+    "<Subject 2>": {"type": "environment", "name": "Workshop"},
+}
+
 from .test_prompt_builder import SECTION_NAMES, section
 
 SYSTEM_PROMPT = "Exact workflow system instructions.\nReturn only the requested JSON."
@@ -23,7 +28,8 @@ SYSTEM_PROMPT = "Exact workflow system instructions.\nReturn only the requested 
 
 def character_context(**overrides):
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "subject_roles": SUBJECT_ROLES,
         "subject_definitions": "<Subject 1> deterministic definitions",
         "summary": "[reference generation + audio reference] deterministic summary",
         "retention_analysis": "<Subject 1>: deterministic retention",
@@ -76,16 +82,24 @@ def configured_enhancer(monkeypatch, tmp_path):
     enhancer.clear_enhancement_cache()
 
 
-def test_parse_character_context_accepts_v1_and_rejects_invalid_json_and_version():
-    parsed = parse_character_context(context_json())
-    assert parsed == character_context()
+def test_parse_character_context_accepts_v2_normalizes_v1_and_rejects_invalid():
+    assert parse_character_context(context_json()) == character_context()
+
+    legacy = character_context(schema_version=1)
+    legacy.pop("subject_roles")
+    normalized = parse_character_context(serialize_character_context(legacy))
+    assert normalized["schema_version"] == 2
+    assert normalized["subject_roles"] == {
+        "<Subject 1>": {"type": "character", "name": ""},
+        "<Subject 2>": {"type": "environment", "name": ""},
+    }
 
     with pytest.raises(ValueError, match="Invalid character_context JSON"):
         parse_character_context("not json")
     with pytest.raises(
         ValueError, match="Unsupported character_context schema_version"
     ):
-        parse_character_context(context_json(schema_version=2))
+        parse_character_context(context_json(schema_version=3))
 
 
 @pytest.mark.parametrize(
@@ -187,6 +201,7 @@ def test_api_request_uses_strict_schema_and_sends_only_enhancement_context(monke
         config=config,
         system_prompt=SYSTEM_PROMPT,
         scene_definition="a workshop",
+        subject_roles=SUBJECT_ROLES,
         duration_seconds=12,
         action_idea="lift the cup",
         additional_notes="keep the hand steady",
@@ -206,6 +221,7 @@ def test_api_request_uses_strict_schema_and_sends_only_enhancement_context(monke
     assert user_payload == {
         "duration_seconds": 12,
         "action_idea": "lift the cup",
+        "subject_roles": SUBJECT_ROLES,
         "scene_definition": "a workshop",
         "additional_notes": "keep the hand steady",
     }
@@ -223,6 +239,7 @@ def test_request_payload_omits_empty_optional_context_fields():
         config=enhancer.load_enhancer_config(),
         system_prompt=SYSTEM_PROMPT,
         scene_definition="  \n ",
+        subject_roles=SUBJECT_ROLES,
         duration_seconds=8,
         action_idea="look toward the door",
         additional_notes="\t",
@@ -236,6 +253,7 @@ def test_request_payload_omits_empty_optional_context_fields():
     assert json.loads(payload["messages"][1]["content"]) == {
         "duration_seconds": 8,
         "action_idea": "look toward the door",
+        "subject_roles": SUBJECT_ROLES,
     }
     assert len(payload["messages"]) == 2
 
@@ -455,6 +473,40 @@ def test_paid_call_cache_changes_for_action_duration_and_scene_context(monkeypat
     assert len(calls) == 4
     assert calls[2]["scene_definition"] == "a quiet workshop"
     assert calls[3]["scene_definition"] == "a different room"
+
+
+def test_paid_call_cache_includes_authoritative_subject_roles(monkeypatch):
+    calls = []
+
+    def fake_request(**kwargs):
+        calls.append(kwargs)
+        return {
+            "detailed_description": "[Shot 1] valid",
+            "additional_soundscape": "",
+        }
+
+    monkeypatch.setattr(enhancer, "_request_enhancement", fake_request)
+    common = {
+        "duration_seconds": 15,
+        "system_prompt": SYSTEM_PROMPT,
+        "action_idea": "Ashley greets the other character.",
+        "additional_notes": "",
+    }
+    first_context = character_context()
+    enhancer.get_enhancement(character_context=first_context, **common)
+    enhancer.get_enhancement(character_context=first_context, **common)
+
+    changed_context = character_context(
+        subject_roles={
+            "<Subject 1>": {"type": "character", "name": "Ashley"},
+            "<Subject 2>": {"type": "character", "name": "Vespera"},
+        }
+    )
+    enhancer.get_enhancement(character_context=changed_context, **common)
+
+    assert len(calls) == 2
+    assert calls[0]["subject_roles"] == SUBJECT_ROLES
+    assert calls[1]["subject_roles"] == changed_context["subject_roles"]
 
 
 def test_comfy_fingerprint_tracks_final_inputs_but_never_api_key(monkeypatch):

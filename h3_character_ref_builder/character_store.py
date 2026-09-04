@@ -937,6 +937,7 @@ class CharacterStore:
             relevant = {
                 "schema_version": profile["schema_version"],
                 "id": profile["id"],
+                "name": profile["name"],
                 "description": profile["description"],
                 "defaults": profile["defaults"],
                 "selected": {

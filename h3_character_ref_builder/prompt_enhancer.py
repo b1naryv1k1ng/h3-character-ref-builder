@@ -20,9 +20,11 @@ from .enhancer_config import (
     ProviderConfigError,
     get_default_provider_config_store,
 )
+from .prompt_builder import normalize_character_context_data
 
 MAX_RESPONSE_BYTES = 1024 * 1024
 ENHANCEMENT_CACHE_SIZE = 128
+LEGACY_SUBJECT_ROLES = {"<Subject 1>": {"type": "character", "name": ""}}
 
 
 class PromptEnhancerError(RuntimeError):
@@ -110,6 +112,7 @@ def _request_payload(
     config: EnhancerConfig,
     system_prompt: str,
     scene_definition: str,
+    subject_roles: dict[str, dict[str, str]] | None = None,
     duration_seconds: int,
     action_idea: str,
     additional_notes: str,
@@ -118,6 +121,9 @@ def _request_payload(
     task = {
         "duration_seconds": duration_seconds,
         "action_idea": action_idea,
+        "subject_roles": (
+            subject_roles if subject_roles is not None else LEGACY_SUBJECT_ROLES
+        ),
     }
     if scene_definition.strip():
         task["scene_definition"] = scene_definition.strip()
@@ -299,6 +305,7 @@ def _request_enhancement(
     config: EnhancerConfig,
     system_prompt: str,
     scene_definition: str,
+    subject_roles: dict[str, dict[str, str]] | None = None,
     duration_seconds: int,
     action_idea: str,
     additional_notes: str,
@@ -307,6 +314,7 @@ def _request_enhancement(
         config=config,
         system_prompt=system_prompt,
         scene_definition=scene_definition,
+        subject_roles=subject_roles,
         duration_seconds=duration_seconds,
         action_idea=action_idea,
         additional_notes=additional_notes,
@@ -321,6 +329,7 @@ def _request_enhancement(
             config=config,
             system_prompt=system_prompt,
             scene_definition=scene_definition,
+            subject_roles=subject_roles,
             duration_seconds=duration_seconds,
             action_idea=action_idea,
             additional_notes=additional_notes,
@@ -344,6 +353,7 @@ def _enhancement_cache_key(
     config: EnhancerConfig,
     system_prompt: str,
     scene_definition: str,
+    subject_roles: dict[str, dict[str, str]] | None = None,
     duration_seconds: int,
     action_idea: str,
     additional_notes: str,
@@ -353,6 +363,9 @@ def _enhancement_cache_key(
         "model": config.model,
         "system_prompt": system_prompt,
         "scene_definition": scene_definition,
+        "subject_roles": (
+            subject_roles if subject_roles is not None else LEGACY_SUBJECT_ROLES
+        ),
         "duration_seconds": duration_seconds,
         "action_idea": action_idea,
         "additional_notes": additional_notes,
@@ -378,12 +391,15 @@ def get_enhancement(
     if not clean_action:
         raise PromptEnhancerError("Action Idea is required.")
     clean_notes = additional_notes.strip()
-    scene_definition = str(character_context["scene_definition"]).strip()
+    context = normalize_character_context_data(character_context)
+    scene_definition = str(context["scene_definition"]).strip()
+    subject_roles = context["subject_roles"]
     config = load_enhancer_config()
     cache_key = _enhancement_cache_key(
         config=config,
         system_prompt=system_prompt,
         scene_definition=scene_definition,
+        subject_roles=subject_roles,
         duration_seconds=duration_seconds,
         action_idea=clean_action,
         additional_notes=clean_notes,
@@ -400,6 +416,7 @@ def get_enhancement(
         config=config,
         system_prompt=system_prompt,
         scene_definition=scene_definition,
+        subject_roles=subject_roles,
         duration_seconds=duration_seconds,
         action_idea=clean_action,
         additional_notes=clean_notes,

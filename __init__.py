@@ -1,21 +1,31 @@
 """ComfyUI registration for H3 Character Ref Builder."""
 
 try:
-    from .h3_character_ref_builder.nodes import H3CharacterReference, H3PromptEnhancer
+    from .h3_character_ref_builder.nodes import (
+        H3CharacterReference,
+        H3DualCharacterReference,
+        H3PromptEnhancer,
+    )
     from .h3_character_ref_builder.routes import register_routes
 except ImportError:
     # Pytest may collect this hyphenated directory as a top-level module.
-    from h3_character_ref_builder.nodes import H3CharacterReference, H3PromptEnhancer
+    from h3_character_ref_builder.nodes import (
+        H3CharacterReference,
+        H3DualCharacterReference,
+        H3PromptEnhancer,
+    )
     from h3_character_ref_builder.routes import register_routes
 
 
 NODE_CLASS_MAPPINGS = {
     "H3CharacterReference": H3CharacterReference,
+    "H3DualCharacterReference": H3DualCharacterReference,
     "H3PromptEnhancer": H3PromptEnhancer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3CharacterReference": "H3 Character Reference",
+    "H3DualCharacterReference": "H3 Dual Character Reference",
     "H3PromptEnhancer": "H3 Prompt Enhancer",
 }
 

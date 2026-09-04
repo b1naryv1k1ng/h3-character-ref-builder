@@ -106,9 +106,10 @@ def test_character_fingerprint_tracks_selected_roles_and_identity_only(store):
     assert role_changed != initial
 
     store.update_profile(character_id, name="Renamed Ari")
-    assert store.fingerprint(character_id) == role_changed
+    name_changed = store.fingerprint(character_id)
+    assert name_changed != role_changed
     store.update_profile(character_id, description="stable identity details")
-    assert store.fingerprint(character_id) != role_changed
+    assert store.fingerprint(character_id) != name_changed
 
 
 def test_selected_content_still_changes_v3_fingerprint(store):

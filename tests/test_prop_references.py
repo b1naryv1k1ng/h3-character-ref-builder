@@ -390,6 +390,7 @@ def test_glm_request_contains_no_prop_image_or_prop_metadata():
     assert user_context == {
         "duration_seconds": 8,
         "action_idea": "She holds the dildo.",
+        "subject_roles": {"<Subject 1>": {"type": "character", "name": ""}},
         "scene_definition": "a white room",
     }
     assert all("image" not in key and "prop" not in key for key in user_context)

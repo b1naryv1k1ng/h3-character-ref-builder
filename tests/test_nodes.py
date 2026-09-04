@@ -36,7 +36,10 @@ def test_node_resolves_defaults_by_media_uuid_not_array_index(store, monkeypatch
     assert third["id"] in image_2
     assert unused["id"] not in {image_1, image_2}
     assert audio["id"] in selected_audio
-    assert context["schema_version"] == 1
+    assert context["schema_version"] == 2
+    assert context["subject_roles"] == {
+        "<Subject 1>": {"type": "character", "name": "Ari"}
+    }
     assert context["subject_definitions"].startswith("<Subject 1>")
     assert context["summary"].startswith("[reference generation + audio reference]")
     assert "fully_preserved" in context["retention_analysis"]
@@ -86,6 +89,10 @@ def test_node_scene_context_and_fingerprint_isolate_other_scene(
         profile["id"], selected_scene["id"], "legacy action is ignored"
     )
     context = json.loads(output[3])
+    assert context["subject_roles"] == {
+        "<Subject 1>": {"type": "character", "name": "Ari"},
+        "<Subject 2>": {"type": "environment", "name": "Beach"},
+    }
     assert "<Subject 2> is warm sand and gentle surf" in context["subject_definitions"]
     assert context["scene_definition"] == "warm sand and gentle surf"
     assert context["default_soundscape"] == "quiet waves"
@@ -96,12 +103,11 @@ def test_node_scene_context_and_fingerprint_isolate_other_scene(
     )
 
     scenes.update_scene(selected_scene["id"], name="Renamed Beach")
-    assert (
-        H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"]) == before
-    )
+    renamed = H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"])
+    assert renamed != before
     scenes.update_scene(selected_scene["id"], definition="a stormy shoreline")
     changed = H3CharacterReference.IS_CHANGED(profile["id"], selected_scene["id"])
-    assert changed != before
+    assert changed != renamed
     assert H3CharacterReference.IS_CHANGED(profile["id"], NO_SCENE) != changed
 
 
