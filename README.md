@@ -250,16 +250,19 @@ no hidden instructions are prepended or appended. The normal multiline widget ca
 converted to a connected STRING input through ComfyUI's widget-to-input action. Blank
 or whitespace-only values fail validation.
 
-Only `subject_roles`, duration, action idea, raw scene definition, and additional notes
-are sent as the JSON user message. Images, audio, deterministic subject boilerplate,
-retention text, baseline ambience, completed prompts, and the system prompt are not
-concatenated into that user message.
+Only `subject_roles`, duration, action idea, raw scene definition, Scene Preset
+`default_soundscape`, and additional notes are sent as the JSON user message. Images,
+audio, deterministic subject boilerplate, retention text, completed prompts, and the
+system prompt are not concatenated into that user message. The baseline soundscape is
+provided so the model can return only action-specific diegetic sounds that are not
+already covered by the scene ambience.
 
 Workflow-owned system prompts should treat `subject_roles` as authoritative: never
 hardcode that Subject 2 is always the environment, never reassign tokens, map matching
 action-idea names to their declared Subject token, and never make an environment Subject
-perform human actions. These instructions remain workflow-editable and are not silently
-inserted by Python.
+perform human actions. The prompt must ask for the structured `beats` and
+`additional_soundscape` contract described below, not final H3 formatting. These
+instructions remain workflow-editable and are not silently inserted by Python.
 
 ### Structured provider response
 
@@ -267,17 +270,61 @@ The enhancer first requests this strict JSON-schema shape:
 
 ```json
 {
-  "detailed_description": "[Shot 1] [0-5s] ...",
-  "additional_soundscape": "..."
+  "beats": [
+    {
+      "start_seconds": 0,
+      "end_seconds": 4,
+      "description": "<Subject 1> crosses the room as the camera tracks beside them.",
+      "vocal_events": [
+        {
+          "kind": "dialogue",
+          "subject": "<Subject 1>",
+          "language": "English",
+          "delivery": "quietly",
+          "content": "Come over here."
+        }
+      ]
+    },
+    {
+      "start_seconds": 4,
+      "end_seconds": 8,
+      "description": "<Subject 1> stops beside the table.",
+      "vocal_events": []
+    }
+  ],
+  "additional_soundscape": "Footsteps crossing the floor."
 }
 ```
 
-`additional_soundscape` may be an empty string. If a compatible provider rejects the
-strict `response_format` with HTTP 400/422, the client retries without that parameter
-while retaining the exact workflow-supplied system message. Plain JSON, provider
-`parsed` objects,
-and accidental fenced JSON blocks are accepted. Missing fields, wrong types, invalid
-JSON, or a detailed description without `[Shot 1]` produce an explicit node error.
+Beat count and integer boundaries are semantic model decisions rather than fixed or
+equal divisions. Python requires at least one contiguous beat covering exactly the
+requested duration and enforces a safety ceiling of `min(duration_seconds, 12)` beats.
+Descriptions contain visible action/camera choreography only. Dialogue and nonverbal
+vocalizations are ordered separately in each beat's `vocal_events` array.
+
+Python validates and safely normalizes Subject tokens, then compiles the plan into H3
+syntax. It generates `[Shot 1]` and timestamps, assigns `(S1)`, `(S2)`, and later IDs by
+first actual dialogue order, and formats dialogue `<d>` tags. Vocalizations receive
+neither a speaker ID nor a dialogue tag. For example, the response above compiles to:
+
+```text
+[Shot 1]
+
+00:00-00:04
+<Subject 1> crosses the room as the camera tracks beside them.
+<Subject 1> (S1) says quietly: <d>[English] Come over here.</d>
+
+00:04-00:08
+<Subject 1> stops beside the table.
+```
+
+`additional_soundscape` may be empty and contains only additional diegetic sound caused
+by the requested action; it should not repeat baseline ambience or spoken dialogue. If
+a compatible provider rejects strict `response_format` with HTTP 400/422, the client
+retries without it while retaining the exact workflow-supplied system message. Plain
+JSON, provider `parsed` objects, and accidental fenced JSON blocks are accepted. An
+invalid semantic plan receives one corrective provider retry with the validation reason.
+If that response is also invalid, the node fails clearly and caches nothing.
 
 ## Final prompt assembly
 
@@ -298,7 +345,8 @@ non_diegetic_music:
 ```
 
 The first three are copied from `character_context`; the LLM cannot rewrite them.
-`detailed_description` comes from the structured LLM response.
+`detailed_description` is deterministically compiled by Python from the structured
+semantic timeline.
 
 When baseline ambience and action-specific sounds both exist, they are joined with
 normal whitespace inside the sole soundscape section:
@@ -328,16 +376,18 @@ labels do not.
 **H3 Prompt Enhancer** uses two cache layers:
 
 - Its ComfyUI fingerprint covers complete final-output inputs: full context, duration,
-  action, notes, music, model/base URL configuration, and system-prompt content.
+  action, notes, music, model/base URL configuration, system-prompt content, and the
+  internal enhancement contract version.
 - A bounded in-process paid-call cache covers only data actually affecting the LLM:
-  subject roles, scene definition, duration, action, notes, endpoint, model, and
-  system prompt.
+  subject roles, scene definition, baseline soundscape, duration, action, notes,
+  endpoint, model, system prompt, and the internal enhancement contract version.
 
 Consequently, re-queuing unchanged nodes uses normal ComfyUI caching. Changing only
-music, deterministic subject text, or Scene Preset baseline ambience rebuilds the final
-prompt without another API call. Changing action, duration, notes, model/provider, raw
-scene definition, subject roles, or system prompt causes a new enhancement request. The
-API key is excluded from workflow data, fingerprints, logs, and errors.
+music or deterministic subject text rebuilds the final prompt without another API call.
+Changing action, duration, notes, model/provider, raw scene definition, baseline
+soundscape, subject roles, system prompt, or the enhancement contract version causes a
+new enhancement request. The API key is excluded from workflow data, fingerprints,
+logs, and errors.
 
 ## Existing workflow migration
 

@@ -21,6 +21,7 @@ dist/
 /uv.lock
 
 # Local test and runtime scratch data
+/tests/
 .test-tmp/
 *.log
 *.tmp
