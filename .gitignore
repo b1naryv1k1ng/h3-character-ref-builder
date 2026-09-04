@@ -1,6 +1,44 @@
+# Python bytecode and tool caches
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.test-tmp/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local environments and packaging output
 .venv/
+venv/
+.tox/
+.nox/
+build/
+dist/
 *.egg-info/
+/uv.lock
+
+# Local test and runtime scratch data
+.test-tmp/
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+.codex-*
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# JavaScript dependencies
+node_modules/
+
+# Editor and operating-system metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
