@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
-import threading
-from collections import OrderedDict
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -25,8 +23,6 @@ from .enhancer_config import (
 from .prompt_builder import normalize_character_context_data
 
 MAX_RESPONSE_BYTES = 1024 * 1024
-ENHANCEMENT_CACHE_SIZE = 128
-ENHANCEMENT_CONTRACT_VERSION = 2
 MAX_TIMELINE_BEATS = 12
 LEGACY_SUBJECT_ROLES = {"<Subject 1>": {"type": "character", "name": ""}}
 
@@ -63,8 +59,6 @@ class _ProviderHTTPError(Exception):
     detail: str
 
 
-_CACHE_LOCK = threading.Lock()
-_ENHANCEMENT_CACHE: OrderedDict[str, tuple[str, str]] = OrderedDict()
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -824,36 +818,6 @@ def _request_enhancement(
     }
 
 
-def _enhancement_cache_key(
-    *,
-    config: EnhancerConfig,
-    system_prompt: str,
-    scene_definition: str,
-    default_soundscape: str = "",
-    subject_roles: dict[str, dict[str, str]] | None = None,
-    duration_seconds: int,
-    action_idea: str,
-    additional_notes: str,
-) -> str:
-    relevant = {
-        "contract_version": ENHANCEMENT_CONTRACT_VERSION,
-        "endpoint": config.endpoint,
-        "model": config.model,
-        "system_prompt": system_prompt,
-        "scene_definition": scene_definition,
-        "default_soundscape": default_soundscape,
-        "subject_roles": (
-            subject_roles if subject_roles is not None else LEGACY_SUBJECT_ROLES
-        ),
-        "duration_seconds": duration_seconds,
-        "action_idea": action_idea,
-        "additional_notes": additional_notes,
-    }
-    return hashlib.sha256(
-        json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-
-
 def get_enhancement(
     *,
     character_context: dict[str, Any],
@@ -861,7 +825,6 @@ def get_enhancement(
     system_prompt: str,
     action_idea: str,
     additional_notes: str,
-    use_cache: bool = False,
 ) -> dict[str, str]:
     if not 1 <= duration_seconds <= 60:
         raise PromptEnhancerError("Duration must be between 1 and 60 seconds.")
@@ -876,30 +839,8 @@ def get_enhancement(
     default_soundscape = str(context["default_soundscape"]).strip()
     subject_roles = context["subject_roles"]
     config = load_enhancer_config()
-    cache_key = None
-    if use_cache:
-        cache_key = _enhancement_cache_key(
-            config=config,
-            system_prompt=system_prompt,
-            scene_definition=scene_definition,
-            default_soundscape=default_soundscape,
-            subject_roles=subject_roles,
-            duration_seconds=duration_seconds,
-            action_idea=clean_action,
-            additional_notes=clean_notes,
-        )
-        with _CACHE_LOCK:
-            cached = _ENHANCEMENT_CACHE.get(cache_key)
-            if cached is not None:
-                _ENHANCEMENT_CACHE.move_to_end(cache_key)
-                _LOGGER.info("[H3 Prompt Enhancer] cache hit")
-                return {
-                    "detailed_description": cached[0],
-                    "additional_soundscape": cached[1],
-                }
-        _LOGGER.info("[H3 Prompt Enhancer] cache miss - calling provider")
-    else:
-        _LOGGER.info("[H3 Prompt Enhancer] cache disabled - calling provider")
+    request_id = uuid.uuid4().hex[:8]
+    _LOGGER.info("[H3 Prompt Enhancer] request %s starting", request_id)
     result = _request_enhancement(
         config=config,
         system_prompt=system_prompt,
@@ -910,32 +851,16 @@ def get_enhancement(
         action_idea=clean_action,
         additional_notes=clean_notes,
     )
-    if use_cache:
-        with _CACHE_LOCK:
-            _ENHANCEMENT_CACHE[cache_key] = (
-                result["detailed_description"],
-                result["additional_soundscape"],
-            )
-            _ENHANCEMENT_CACHE.move_to_end(cache_key)
-            while len(_ENHANCEMENT_CACHE) > ENHANCEMENT_CACHE_SIZE:
-                _ENHANCEMENT_CACHE.popitem(last=False)
+    _LOGGER.info("[H3 Prompt Enhancer] request %s complete", request_id)
     return dict(result)
-
-
-def clear_enhancement_cache() -> None:
-    """Clear the in-process paid-call cache (primarily for tests and development)."""
-    with _CACHE_LOCK:
-        _ENHANCEMENT_CACHE.clear()
 
 
 __all__ = [
     "API_KEY_ENV",
     "BASE_URL_ENV",
-    "ENHANCEMENT_CONTRACT_VERSION",
     "MODEL_ENV",
     "TIMEOUT_ENV",
     "PromptEnhancerError",
-    "clear_enhancement_cache",
     "compile_detailed_description",
     "get_enhancement",
     "load_enhancer_config",

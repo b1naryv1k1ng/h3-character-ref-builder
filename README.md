@@ -234,7 +234,6 @@ STRING  system_prompt       multiline workflow-owned provider instructions
 STRING  action_idea         multiline rough action request
 STRING  additional_notes    multiline, default empty
 STRING  non_diegetic_music  multiline, default N/A
-BOOLEAN use_cache            Use Cache checkbox, default false
 ```
 
 Outputs:
@@ -365,7 +364,7 @@ Natural diegetic ambience appropriate to the scene, with synchronized physical s
 
 Music is copied from the widget and falls back to `N/A` when blank.
 
-## Cache behavior
+## Execution behavior
 
 Both reference nodes fingerprint only selected profiles and selected scene/prop state.
 The dual node independently includes Character 1 and Character 2 fingerprints. Selected
@@ -374,26 +373,9 @@ name, text, soundscape or image; and selected prop name, description or image in
 the relevant node. Unrelated characters, scenes, props, unused references, and media
 labels do not.
 
-**H3 Prompt Enhancer** intentionally bypasses ComfyUI's node-execution cache and runs
-every time the workflow is queued. This ensures connected STRING values always reach
-the node and cannot be hidden behind an earlier execution fingerprint.
-
-The visible **Use Cache** checkbox controls only the bounded in-process paid-call cache:
-
-- **Off (default):** every queue calls the provider. The node neither reads nor writes
-  the paid-call cache.
-- **On:** every queue still executes the node. An identical successful provider request
-  can be returned from the paid-call cache; a miss calls the provider and stores the
-  successful result.
-
-The paid-call key covers the enhancement contract version, endpoint, model, exact system
-prompt, subject roles, scene definition, baseline soundscape, duration, action, and
-additional notes. The checkbox itself is policy and is not part of the key. Music is
-assembled afterward, so changing only `non_diegetic_music` rebuilds the final prompt
-without changing the paid-call key. API keys and request timeouts are also excluded.
-Cache decisions are logged without prompt content, character data, dialogue, or
-credentials. Existing workflows without the new checkbox use the safe `False` default
-and call the provider freshly.
+The **H3 Prompt Enhancer** is intentionally non-cacheable. Every queued execution performs
+a fresh provider request so changes to connected prompts and choreography are always
+evaluated by the LLM. Repeated identical queues also make fresh provider calls.
 
 ## Existing workflow migration
 

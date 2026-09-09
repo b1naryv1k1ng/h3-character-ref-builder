@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 
 from .character_store import (
     InvalidCharacterId,
@@ -421,17 +422,6 @@ class H3PromptEnhancer:
                         "label": "Non-Diegetic Music",
                     },
                 ),
-                "use_cache": (
-                    "BOOLEAN",
-                    {
-                        "default": False,
-                        "label": "Use Cache",
-                        "tooltip": (
-                            "Reuse a matching successful provider result. When off, "
-                            "the provider is called on every queue."
-                        ),
-                    },
-                ),
             }
         }
 
@@ -444,7 +434,7 @@ class H3PromptEnhancer:
     @classmethod
     def IS_CHANGED(cls, *args, **kwargs):
         del cls, args, kwargs
-        return float("nan")
+        return uuid.uuid4().hex
 
     def enhance_prompt(
         self,
@@ -454,8 +444,10 @@ class H3PromptEnhancer:
         action_idea,
         additional_notes="",
         non_diegetic_music=DEFAULT_MUSIC,
-        use_cache=False,
+        *legacy_values,
+        **legacy_inputs,
     ):
+        del legacy_values, legacy_inputs
         try:
             context = parse_character_context(character_context)
             enhancement = get_enhancement(
@@ -464,7 +456,6 @@ class H3PromptEnhancer:
                 system_prompt=system_prompt,
                 action_idea=action_idea,
                 additional_notes=additional_notes,
-                use_cache=use_cache,
             )
         except (TypeError, ValueError, PromptEnhancerError) as exc:
             raise RuntimeError(str(exc)) from exc
