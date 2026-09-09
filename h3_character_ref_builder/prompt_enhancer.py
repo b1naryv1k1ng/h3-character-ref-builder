@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from collections import OrderedDict
@@ -64,6 +65,7 @@ class _ProviderHTTPError(Exception):
 
 _CACHE_LOCK = threading.Lock()
 _ENHANCEMENT_CACHE: OrderedDict[str, tuple[str, str]] = OrderedDict()
+_LOGGER = logging.getLogger(__name__)
 
 
 def _redact(value: object, api_key: str) -> str:
@@ -859,6 +861,7 @@ def get_enhancement(
     system_prompt: str,
     action_idea: str,
     additional_notes: str,
+    use_cache: bool = False,
 ) -> dict[str, str]:
     if not 1 <= duration_seconds <= 60:
         raise PromptEnhancerError("Duration must be between 1 and 60 seconds.")
@@ -873,24 +876,30 @@ def get_enhancement(
     default_soundscape = str(context["default_soundscape"]).strip()
     subject_roles = context["subject_roles"]
     config = load_enhancer_config()
-    cache_key = _enhancement_cache_key(
-        config=config,
-        system_prompt=system_prompt,
-        scene_definition=scene_definition,
-        default_soundscape=default_soundscape,
-        subject_roles=subject_roles,
-        duration_seconds=duration_seconds,
-        action_idea=clean_action,
-        additional_notes=clean_notes,
-    )
-    with _CACHE_LOCK:
-        cached = _ENHANCEMENT_CACHE.get(cache_key)
-        if cached is not None:
-            _ENHANCEMENT_CACHE.move_to_end(cache_key)
-            return {
-                "detailed_description": cached[0],
-                "additional_soundscape": cached[1],
-            }
+    cache_key = None
+    if use_cache:
+        cache_key = _enhancement_cache_key(
+            config=config,
+            system_prompt=system_prompt,
+            scene_definition=scene_definition,
+            default_soundscape=default_soundscape,
+            subject_roles=subject_roles,
+            duration_seconds=duration_seconds,
+            action_idea=clean_action,
+            additional_notes=clean_notes,
+        )
+        with _CACHE_LOCK:
+            cached = _ENHANCEMENT_CACHE.get(cache_key)
+            if cached is not None:
+                _ENHANCEMENT_CACHE.move_to_end(cache_key)
+                _LOGGER.info("[H3 Prompt Enhancer] cache hit")
+                return {
+                    "detailed_description": cached[0],
+                    "additional_soundscape": cached[1],
+                }
+        _LOGGER.info("[H3 Prompt Enhancer] cache miss - calling provider")
+    else:
+        _LOGGER.info("[H3 Prompt Enhancer] cache disabled - calling provider")
     result = _request_enhancement(
         config=config,
         system_prompt=system_prompt,
@@ -901,44 +910,16 @@ def get_enhancement(
         action_idea=clean_action,
         additional_notes=clean_notes,
     )
-    with _CACHE_LOCK:
-        _ENHANCEMENT_CACHE[cache_key] = (
-            result["detailed_description"],
-            result["additional_soundscape"],
-        )
-        _ENHANCEMENT_CACHE.move_to_end(cache_key)
-        while len(_ENHANCEMENT_CACHE) > ENHANCEMENT_CACHE_SIZE:
-            _ENHANCEMENT_CACHE.popitem(last=False)
+    if use_cache:
+        with _CACHE_LOCK:
+            _ENHANCEMENT_CACHE[cache_key] = (
+                result["detailed_description"],
+                result["additional_soundscape"],
+            )
+            _ENHANCEMENT_CACHE.move_to_end(cache_key)
+            while len(_ENHANCEMENT_CACHE) > ENHANCEMENT_CACHE_SIZE:
+                _ENHANCEMENT_CACHE.popitem(last=False)
     return dict(result)
-
-
-def enhancer_execution_fingerprint(
-    *,
-    character_context: str,
-    duration_seconds: int,
-    system_prompt: str,
-    action_idea: str,
-    additional_notes: str,
-    non_diegetic_music: str,
-) -> str:
-    try:
-        provider = get_default_provider_config_store().resolve()
-    except ProviderConfigError as exc:
-        raise PromptEnhancerError(str(exc)) from exc
-    relevant = {
-        "contract_version": ENHANCEMENT_CONTRACT_VERSION,
-        "character_context": character_context,
-        "duration_seconds": duration_seconds,
-        "system_prompt": system_prompt,
-        "action_idea": action_idea,
-        "additional_notes": additional_notes,
-        "non_diegetic_music": non_diegetic_music,
-        "base_url": provider.base_url,
-        "model": provider.model,
-    }
-    return hashlib.sha256(
-        json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def clear_enhancement_cache() -> None:
@@ -956,7 +937,6 @@ __all__ = [
     "PromptEnhancerError",
     "clear_enhancement_cache",
     "compile_detailed_description",
-    "enhancer_execution_fingerprint",
     "get_enhancement",
     "load_enhancer_config",
     "max_beats_for_duration",

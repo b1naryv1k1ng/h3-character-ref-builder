@@ -234,6 +234,7 @@ STRING  system_prompt       multiline workflow-owned provider instructions
 STRING  action_idea         multiline rough action request
 STRING  additional_notes    multiline, default empty
 STRING  non_diegetic_music  multiline, default N/A
+BOOLEAN use_cache            Use Cache checkbox, default false
 ```
 
 Outputs:
@@ -373,21 +374,26 @@ name, text, soundscape or image; and selected prop name, description or image in
 the relevant node. Unrelated characters, scenes, props, unused references, and media
 labels do not.
 
-**H3 Prompt Enhancer** uses two cache layers:
+**H3 Prompt Enhancer** intentionally bypasses ComfyUI's node-execution cache and runs
+every time the workflow is queued. This ensures connected STRING values always reach
+the node and cannot be hidden behind an earlier execution fingerprint.
 
-- Its ComfyUI fingerprint covers complete final-output inputs: full context, duration,
-  action, notes, music, model/base URL configuration, system-prompt content, and the
-  internal enhancement contract version.
-- A bounded in-process paid-call cache covers only data actually affecting the LLM:
-  subject roles, scene definition, baseline soundscape, duration, action, notes,
-  endpoint, model, system prompt, and the internal enhancement contract version.
+The visible **Use Cache** checkbox controls only the bounded in-process paid-call cache:
 
-Consequently, re-queuing unchanged nodes uses normal ComfyUI caching. Changing only
-music or deterministic subject text rebuilds the final prompt without another API call.
-Changing action, duration, notes, model/provider, raw scene definition, baseline
-soundscape, subject roles, system prompt, or the enhancement contract version causes a
-new enhancement request. The API key is excluded from workflow data, fingerprints,
-logs, and errors.
+- **Off (default):** every queue calls the provider. The node neither reads nor writes
+  the paid-call cache.
+- **On:** every queue still executes the node. An identical successful provider request
+  can be returned from the paid-call cache; a miss calls the provider and stores the
+  successful result.
+
+The paid-call key covers the enhancement contract version, endpoint, model, exact system
+prompt, subject roles, scene definition, baseline soundscape, duration, action, and
+additional notes. The checkbox itself is policy and is not part of the key. Music is
+assembled afterward, so changing only `non_diegetic_music` rebuilds the final prompt
+without changing the paid-call key. API keys and request timeouts are also excluded.
+Cache decisions are logged without prompt content, character data, dialogue, or
+credentials. Existing workflows without the new checkbox use the safe `False` default
+and call the provider freshly.
 
 ## Existing workflow migration
 
